@@ -27,8 +27,8 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${crimsonPro.variable}`}>
-      <body className="font-serif">
+    <html lang="en" className={`${geist.variable} ${crimsonPro.variable} dark`}>
+      <body className="font-serif bg-[#0a0a0a] text-white antialiased">
         <TRPCReactProvider>{children}</TRPCReactProvider>
       </body>
     </html>

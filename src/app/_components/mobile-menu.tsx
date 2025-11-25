@@ -12,25 +12,25 @@ import {
   SheetTrigger,
   SheetClose,
 } from "@/components/ui/sheet";
+import { LottieLogo } from "@/app/_components/lottie-logo";
 
 export function MobileMenu() {
   return (
     <Sheet>
       <SheetTrigger asChild>
-        <Button className="lg:hidden bg-blue-600 hover:bg-blue-700 text-amber-50 px-4 py-2 rounded-lg text-sm font-bold font-serif transition-colors border-2 border-blue-800 flex items-center gap-2">
+        <Button className="lg:hidden bg-white/10 border border-white/10 text-white hover:bg-white/20 px-4 py-2 rounded-lg text-sm font-medium transition-all flex items-center gap-2">
           <Menu className="w-4 h-4" />
           Menu
         </Button>
       </SheetTrigger>
-      <SheetContent side="right" className="bg-amber-50 border-amber-200 w-[300px] sm:w-[400px]">
+      <SheetContent side="right" className="bg-[#0a0a0a] border-white/10 w-[300px] sm:w-[400px]">
         <SheetHeader>
-          <SheetTitle className="text-xl font-bold font-serif text-blue-900 flex items-center gap-2">
-            <img
-              src="/logo.png"
-              alt="LightShadow Logo"
+          <SheetTitle className="text-xl font-semibold text-white flex items-center gap-2">
+            <LottieLogo
               width={32}
               height={32}
               className="rounded-lg"
+              playOnHover={false}
             />
             LightShadow
           </SheetTitle>
@@ -39,7 +39,7 @@ export function MobileMenu() {
           <SheetClose asChild>
             <Link
               href="#features"
-              className="text-base font-serif font-semibold text-blue-800 hover:text-blue-600 transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-blue-50"
+              className="text-base font-medium text-white/60 hover:text-white transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-white/5"
             >
               <Sparkles className="w-5 h-5" />
               Features
@@ -48,7 +48,7 @@ export function MobileMenu() {
           <SheetClose asChild>
             <Link
               href="#technology"
-              className="text-base font-serif font-semibold text-blue-800 hover:text-blue-600 transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-blue-50"
+              className="text-base font-medium text-white/60 hover:text-white transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-white/5"
             >
               <Cpu className="w-5 h-5" />
               Technology
@@ -57,7 +57,7 @@ export function MobileMenu() {
           <SheetClose asChild>
             <Link
               href="#enterprise"
-              className="text-base font-serif font-semibold text-blue-800 hover:text-blue-600 transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-blue-50"
+              className="text-base font-medium text-white/60 hover:text-white transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-white/5"
             >
               <Building2 className="w-5 h-5" />
               Enterprise
@@ -66,20 +66,20 @@ export function MobileMenu() {
           <SheetClose asChild>
             <Link
               href="#research"
-              className="text-base font-serif font-semibold text-blue-800 hover:text-blue-600 transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-blue-50"
+              className="text-base font-medium text-white/60 hover:text-white transition-colors flex items-center gap-2 py-2 px-3 rounded-lg hover:bg-white/5"
             >
               <BookOpen className="w-5 h-5" />
               Research
             </Link>
           </SheetClose>
-          <div className="pt-4 border-t border-amber-200 mt-4">
+          <div className="pt-4 border-t border-white/10 mt-4">
             <div className="flex items-center gap-3 mb-4 px-3">
-              <Avatar className="w-10 h-10 bg-blue-100 border-2 border-blue-300">
-                <AvatarFallback className="text-blue-900 text-sm font-bold font-serif">A</AvatarFallback>
+              <Avatar className="w-10 h-10 bg-white/10 border border-white/10">
+                <AvatarFallback className="text-white text-sm font-semibold">A</AvatarFallback>
               </Avatar>
-              <span className="text-sm font-serif font-semibold text-blue-900">Account</span>
+              <span className="text-sm font-medium text-white">Account</span>
             </div>
-            <Button className="w-full bg-blue-600 hover:bg-blue-700 text-amber-50 px-5 py-2.5 rounded-lg text-sm font-bold font-serif transition-colors border-2 border-blue-800">
+            <Button className="w-full bg-white text-black hover:bg-white/90 px-5 py-2.5 rounded-lg text-sm font-semibold transition-all">
               GET STARTED
             </Button>
           </div>
