@@ -24,3 +24,36 @@ export const posts = createTable(
   }),
   (t) => [index("name_idx").on(t.name)],
 );
+
+export const chats = createTable(
+  "chat",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    userId: d.varchar({ length: 256 }).notNull(),
+    name: d.varchar({ length: 256 }).notNull(),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    updatedAt: d.timestamp({ withTimezone: true }).$onUpdate(() => new Date()),
+  }),
+  (t) => [index("chat_user_idx").on(t.userId)],
+);
+
+export const messages = createTable(
+  "message",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    chatId: d
+      .integer()
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    role: d.varchar({ length: 32 }).notNull(), // 'user' or 'assistant'
+    content: d.text().notNull(),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  }),
+  (t) => [index("message_chat_idx").on(t.chatId)],
+);
