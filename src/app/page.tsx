@@ -31,7 +31,9 @@ export default async function Home() {
         <div className="flex-1 flex pt-[73px]">
           {/* Left Sidebar */}
           <div className="hidden lg:block h-[calc(100vh-73px)] sticky top-[73px]">
-            <Sidebar />
+            <Suspense fallback={<div className="w-80 h-full flex items-center justify-center text-white/60">Loading...</div>}>
+              <Sidebar />
+            </Suspense>
           </div>
 
           {/* Main Content Area */}
