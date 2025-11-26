@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { ArrowLeft, Menu } from "lucide-react";
 
 import { HydrateClient } from "@/trpc/server";
@@ -35,7 +36,9 @@ export default async function Home() {
 
           {/* Main Content Area */}
           <div className="flex-1 flex flex-col min-w-0">
-            <Chat />
+            <Suspense fallback={<div className="flex-1 flex items-center justify-center text-white/60">Loading...</div>}>
+              <Chat />
+            </Suspense>
           </div>
         </div>
       </main>
