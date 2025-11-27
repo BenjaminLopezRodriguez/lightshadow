@@ -19,7 +19,8 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
-  const [attachedFile, setAttachedFile] = useState<{ url: string; name: string } | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{ url: string; name: string; pdfDocumentId?: number } | null>(null);
+  const [chatPdfRefs, setChatPdfRefs] = useState<Array<{ id: number; fileName: string }>>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -34,6 +35,21 @@ export function Chat() {
     { id: parseInt(chatId || "0") },
     { enabled: !!chatId }
   );
+
+  const { data: pdfDocuments } = api.pdf.getAll.useQuery(undefined, {
+    enabled: (isAuthenticated ?? false),
+  });
+
+  const { data: chatPdfs } = api.pdf.getByChatId.useQuery(
+    { chatId: parseInt(chatId || "0") },
+    { enabled: (!!chatId && (isAuthenticated ?? false)) }
+  );
+
+  useEffect(() => {
+    if (chatPdfs) {
+      setChatPdfRefs(chatPdfs.map(pdf => ({ id: pdf.id, fileName: pdf.fileName })));
+    }
+  }, [chatPdfs]);
 
   useEffect(() => {
     if (chatHistory) {
@@ -88,6 +104,7 @@ export function Chat() {
           })),
           chatId: chatId ? parseInt(chatId) : undefined,
           fileUrl: attachedFile?.url,
+          pdfDocumentId: attachedFile?.pdfDocumentId,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -225,6 +242,21 @@ export function Chat() {
       {/* Input Area */}
       <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
         <div className="w-full max-w-3xl mx-auto space-y-4">
+          {/* Show PDF references for this chat */}
+          {chatPdfRefs.length > 0 && (
+            <div className="flex flex-wrap gap-2">
+              {chatPdfRefs.map((pdf) => (
+                <div
+                  key={pdf.id}
+                  className="flex items-center gap-2 px-3 py-1.5 bg-indigo-500/20 border border-indigo-500/30 rounded-lg"
+                >
+                  <FileText className="w-3 h-3 text-indigo-300" />
+                  <span className="text-xs text-indigo-200">{pdf.fileName}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
           {attachedFile && (
             <div className="flex items-center gap-2 p-2 bg-white/10 rounded-lg w-fit">
               <FileText className="w-4 h-4 text-white" />
@@ -243,7 +275,12 @@ export function Chat() {
                   endpoint="pdfUploader"
                   onClientUploadComplete={(res) => {
                     if (res && res[0]) {
-                      setAttachedFile({ url: res[0].url, name: res[0].name });
+                      const uploadData = res[0] as any;
+                      setAttachedFile({
+                        url: res[0].url,
+                        name: res[0].name,
+                        pdfDocumentId: uploadData.pdfDocumentId,
+                      });
                     }
                   }}
                   onUploadError={(error: Error) => {
