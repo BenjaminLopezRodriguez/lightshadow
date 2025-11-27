@@ -2,6 +2,7 @@
 // https://orm.drizzle.team/docs/sql-schema-declaration
 
 import { index, pgTableCreator } from "drizzle-orm/pg-core";
+import { relations } from "drizzle-orm";
 
 /**
  * This is an example of how to use the multi-project schema feature of Drizzle ORM. Use the same
@@ -163,3 +164,72 @@ export const chatPdfReferences = createTable(
     index("chat_pdf_doc_idx").on(t.pdfDocumentId),
   ],
 );
+
+// Relations
+export const userProfilesRelations = relations(userProfiles, ({ many }) => ({
+  contacts: many(contacts, { relationName: "userContacts" }),
+  contactOf: many(contacts, { relationName: "contactOf" }),
+  chats: many(chats),
+  chatParticipants: many(chatParticipants),
+  pdfDocuments: many(pdfDocuments),
+}));
+
+export const contactsRelations = relations(contacts, ({ one }) => ({
+  user: one(userProfiles, {
+    fields: [contacts.userId],
+    references: [userProfiles.userId],
+    relationName: "userContacts",
+  }),
+  contact: one(userProfiles, {
+    fields: [contacts.contactId],
+    references: [userProfiles.userId],
+    relationName: "contactOf",
+  }),
+}));
+
+export const chatsRelations = relations(chats, ({ one, many }) => ({
+  owner: one(userProfiles, {
+    fields: [chats.userId],
+    references: [userProfiles.userId],
+  }),
+  messages: many(messages),
+  participants: many(chatParticipants),
+  pdfReferences: many(chatPdfReferences),
+}));
+
+export const chatParticipantsRelations = relations(chatParticipants, ({ one }) => ({
+  chat: one(chats, {
+    fields: [chatParticipants.chatId],
+    references: [chats.id],
+  }),
+  user: one(userProfiles, {
+    fields: [chatParticipants.userId],
+    references: [userProfiles.userId],
+  }),
+}));
+
+export const messagesRelations = relations(messages, ({ one }) => ({
+  chat: one(chats, {
+    fields: [messages.chatId],
+    references: [chats.id],
+  }),
+}));
+
+export const pdfDocumentsRelations = relations(pdfDocuments, ({ one, many }) => ({
+  user: one(userProfiles, {
+    fields: [pdfDocuments.userId],
+    references: [userProfiles.userId],
+  }),
+  chatReferences: many(chatPdfReferences),
+}));
+
+export const chatPdfReferencesRelations = relations(chatPdfReferences, ({ one }) => ({
+  chat: one(chats, {
+    fields: [chatPdfReferences.chatId],
+    references: [chats.id],
+  }),
+  pdfDocument: one(pdfDocuments, {
+    fields: [chatPdfReferences.pdfDocumentId],
+    references: [pdfDocuments.id],
+  }),
+}));
