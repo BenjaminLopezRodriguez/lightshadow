@@ -68,11 +68,19 @@ export async function POST(req: Request) {
           });
 
           if (!existingRef) {
-            await db.insert(chatPdfReferences).values({
-              chatId: currentChatId,
-              pdfDocumentId: pdfDocumentId,
-            });
-            console.log(`Linked PDF ${pdfDocumentId} to chat ${currentChatId}`);
+            try {
+              await db.insert(chatPdfReferences).values({
+                chatId: currentChatId,
+                pdfDocumentId: pdfDocumentId,
+              });
+              console.log(`Linked PDF ${pdfDocumentId} to chat ${currentChatId}`);
+            } catch (error: any) {
+              if (error?.code === '42P01') {
+                console.warn("PDF reference table doesn't exist. Run migration at /api/migrate");
+              } else {
+                console.error("Error linking PDF to chat:", error);
+              }
+            }
           }
         }
       } else {
@@ -101,11 +109,19 @@ export async function POST(req: Request) {
           });
 
           if (!existingRef) {
-            await db.insert(chatPdfReferences).values({
-              chatId: currentChatId,
-              pdfDocumentId: pdfDoc.id,
-            });
-            console.log(`Linked PDF ${pdfDoc.id} to chat ${currentChatId} via URL`);
+            try {
+              await db.insert(chatPdfReferences).values({
+                chatId: currentChatId,
+                pdfDocumentId: pdfDoc.id,
+              });
+              console.log(`Linked PDF ${pdfDoc.id} to chat ${currentChatId} via URL`);
+            } catch (error: any) {
+              if (error?.code === '42P01') {
+                console.warn("PDF reference table doesn't exist. Run migration at /api/migrate");
+              } else {
+                console.error("Error linking PDF to chat:", error);
+              }
+            }
           }
         }
       } else {
@@ -124,23 +140,40 @@ export async function POST(req: Request) {
         });
 
         if (!existingRef) {
-          await db.insert(chatPdfReferences).values({
-            chatId: currentChatId,
-            pdfDocumentId: pdfId,
-          });
-          console.log(`Linked PDF ${pdfId} to newly created chat ${currentChatId}`);
+          try {
+            await db.insert(chatPdfReferences).values({
+              chatId: currentChatId,
+              pdfDocumentId: pdfId,
+            });
+            console.log(`Linked PDF ${pdfId} to newly created chat ${currentChatId}`);
+          } catch (error: any) {
+            if (error?.code === '42P01') {
+              console.warn("PDF reference table doesn't exist. Run migration at /api/migrate");
+            } else {
+              console.error("Error linking PDF to chat:", error);
+            }
+          }
         }
       }
     }
 
     // Get all PDF references for this chat
     if (currentChatId) {
-      const chatPdfRefs = await db.query.chatPdfReferences.findMany({
-        where: eq(chatPdfReferences.chatId, currentChatId),
-      });
-      const refIds = chatPdfRefs.map(ref => ref.pdfDocumentId);
-      // Merge with any PDF IDs from the current request
-      pdfDocIds = [...new Set([...pdfDocIds, ...refIds])];
+      try {
+        const chatPdfRefs = await db.query.chatPdfReferences.findMany({
+          where: eq(chatPdfReferences.chatId, currentChatId),
+        });
+        const refIds = chatPdfRefs.map(ref => ref.pdfDocumentId);
+        // Merge with any PDF IDs from the current request
+        pdfDocIds = [...new Set([...pdfDocIds, ...refIds])];
+      } catch (error: any) {
+        // If table doesn't exist, log warning but continue
+        if (error?.code === '42P01') {
+          console.warn("PDF reference table doesn't exist. Run migration at /api/migrate");
+        } else {
+          console.error("Error fetching PDF references:", error);
+        }
+      }
     }
 
     const lastMessage = messages[messages.length - 1];
