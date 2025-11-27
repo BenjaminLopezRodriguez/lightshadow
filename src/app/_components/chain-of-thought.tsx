@@ -18,20 +18,37 @@ interface ChainOfThoughtProps {
 
 export function ChainOfThought({ thoughts, isStreaming = false }: ChainOfThoughtProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const [selectedStep, setSelectedStep] = useState<number | null>(null);
   const [displayedThoughts, setDisplayedThoughts] = useState<ThoughtStage[]>([]);
+  const [fadeState, setFadeState] = useState<"in" | "out">("in");
 
   useEffect(() => {
     if (thoughts.length > 0) {
       // Auto-open when new thoughts arrive
       setIsOpen(true);
+      // Set selected step to the latest thought
+      setSelectedStep(thoughts.length - 1);
       // Animate thoughts appearing one by one
       setDisplayedThoughts(thoughts);
     }
   }, [thoughts]);
 
+  useEffect(() => {
+    if (selectedStep !== null && displayedThoughts.length > 0) {
+      // Fade out, then fade in with new content
+      setFadeState("out");
+      const timer = setTimeout(() => {
+        setFadeState("in");
+      }, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [selectedStep, displayedThoughts.length]);
+
   if (thoughts.length === 0 && !isStreaming) {
     return null;
   }
+
+  const selectedThought = selectedStep !== null ? displayedThoughts[selectedStep] : null;
 
   return (
     <Collapsible open={isOpen} onOpenChange={setIsOpen} className="w-full">
@@ -57,31 +74,49 @@ export function ChainOfThought({ thoughts, isStreaming = false }: ChainOfThought
         />
       </CollapsibleTrigger>
       <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down transition-all duration-200">
-        <div className="mt-2 space-y-2 pl-7">
-          {displayedThoughts.map((stage, index) => (
+        <div className="mt-2 pl-7">
+          {/* Step Selector Dropdown */}
+          {displayedThoughts.length > 0 && (
+            <div className="mb-3">
+              <select
+                value={selectedStep ?? ""}
+                onChange={(e) => setSelectedStep(parseInt(e.target.value))}
+                className="w-full px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-sm text-white/80 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500/50 transition-all"
+              >
+                {displayedThoughts.map((_, index) => (
+                  <option key={index} value={index} className="bg-black text-white">
+                    Stage {index + 1}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Display Selected Thought with Fade Animation */}
+          {selectedThought && (
             <div
-              key={stage.id}
-              className="opacity-0 animate-fade-in"
-              style={{ animationDelay: `${index * 100}ms` }}
+              className={cn(
+                "transition-opacity duration-300",
+                fadeState === "in" ? "opacity-100" : "opacity-0"
+              )}
             >
               <div className="flex gap-3 items-start">
                 <div className="flex flex-col items-center mt-1">
-                  <div className="w-2 h-2 rounded-full bg-indigo-500/60 flex-shrink-0" />
-                  {index < displayedThoughts.length - 1 && (
-                    <div className="w-px h-full min-h-[20px] bg-indigo-500/20 mt-1" />
-                  )}
+                  <div className="w-2 h-2 rounded-full bg-indigo-500/60 flex-shrink-0 animate-pulse" />
                 </div>
                 <div className="flex-1 pb-3">
                   <div className="text-xs font-medium text-indigo-300/80 mb-1">
-                    Stage {index + 1}
+                    Stage {selectedStep! + 1} of {displayedThoughts.length}
                   </div>
                   <div className="text-sm text-white/70 leading-relaxed whitespace-pre-wrap break-words">
-                    🧠 thinking: {stage.thought}
+                    🧠 thinking: {selectedThought.thought}
                   </div>
                 </div>
               </div>
             </div>
-          ))}
+          )}
+
+          {/* Streaming Indicator */}
           {isStreaming && (
             <div className="flex gap-3 items-start animate-pulse">
               <div className="flex flex-col items-center mt-1">
