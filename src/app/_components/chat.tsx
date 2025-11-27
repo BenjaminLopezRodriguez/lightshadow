@@ -11,6 +11,7 @@ import { UploadButton } from "@/lib/uploadthing";
 import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
 import { ChainOfThought } from "./chain-of-thought";
 import { MarkdownContent } from "./markdown-content";
+import { GroupChatManager } from "./group-chat-manager";
 
 interface Message {
   role: "user" | "assistant";
@@ -290,10 +291,52 @@ export function Chat() {
     { title: "Brainstorming", prompt: "Give me 5 unique ideas for a mobile app using AI." },
   ];
 
+  const isGroupChat = chatHistory?.isGroupChat ?? false;
+  const themeColor = chatHistory?.themeColor;
+  const groupName = chatHistory?.groupName;
+
   return (
     <div className="flex-1 flex flex-col h-full relative">
+      {/* Group Chat Header */}
+      {chatId && (
+        <div className="border-b border-white/5 px-4 py-3 flex items-center justify-between bg-black/20">
+          <div className="flex items-center gap-3">
+            {isGroupChat && groupName && (
+              <div className="flex items-center gap-2">
+                <div
+                  className="w-2 h-2 rounded-full"
+                  style={{ backgroundColor: themeColor || "#6366f1" }}
+                />
+                <h2 className="text-sm font-medium text-white">{groupName}</h2>
+              </div>
+            )}
+          </div>
+          {chatId && (
+            <GroupChatManager
+              chatId={parseInt(chatId)}
+              isGroupChat={isGroupChat}
+              groupName={groupName || undefined}
+              themeColor={themeColor || undefined}
+              onUpdate={() => {
+                utils.chat.getById.invalidate({ id: parseInt(chatId) });
+              }}
+            />
+          )}
+        </div>
+      )}
+
       {/* Messages Area */}
-      <div className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 pb-40">
+      <div
+        className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 pb-40"
+        style={
+          isGroupChat && themeColor
+            ? {
+                  borderLeft: `4px solid ${themeColor}`,
+                  paddingLeft: "calc(1rem + 4px)",
+                }
+            : undefined
+        }
+      >
         {displayMessages.length === 0 ? (
           <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8 text-center px-4">
             <div className="space-y-4">
