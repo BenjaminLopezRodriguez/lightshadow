@@ -28,6 +28,24 @@ const config = {
       },
     ],
   },
+  webpack: (config, { isServer }) => {
+    // Handle pdfjs-dist for server-side rendering
+    if (isServer) {
+      config.resolve.alias = {
+        ...config.resolve.alias,
+        canvas: false,
+      };
+    }
+    
+    // Ignore canvas and other optional dependencies that pdfjs-dist might try to use
+    config.resolve.fallback = {
+      ...config.resolve.fallback,
+      canvas: false,
+      fs: false,
+    };
+
+    return config;
+  },
 };
 
 export default config;

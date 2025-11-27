@@ -4,6 +4,7 @@ import { env } from "@/env";
 import { db } from "@/server/db";
 import { pdfDocuments } from "@/server/db/schema";
 import { storePdfChunks, chunkText } from "@/lib/pinecone";
+import { parsePDFFromURL } from "@/lib/pdf-parser";
 
 const f = createUploadthing();
 
@@ -53,7 +54,7 @@ export const ourFileRouter = {
                     console.error("Error uploading to PDF.ai:", error);
                 }
 
-                // Step 2: Download PDF and get text from PDF.ai if available, otherwise skip local parsing
+                // Step 2: Extract text from PDF
                 let pdfText = "";
                 let pageCount = 0;
                 
@@ -78,11 +79,19 @@ export const ourFileRouter = {
                     }
                 }
                 
-                // Fallback: Try to parse locally only if PDF.ai didn't work
-                // Skip local parsing to avoid DOMMatrix error - rely on PDF.ai instead
-                if (!pdfText && pdfAiFileId) {
-                    console.warn("PDF.ai text extraction failed, skipping local parsing to avoid DOMMatrix error");
-                    // We'll still create the document record and let PDF.ai handle queries
+                // Fallback: Parse PDF locally using pdfjs-dist if PDF.ai didn't work
+                if (!pdfText || pdfText.trim().length === 0) {
+                    try {
+                        console.log("PDF.ai text extraction failed or unavailable, parsing PDF locally...");
+                        const parsedPDF = await parsePDFFromURL(file.url);
+                        pdfText = parsedPDF.text;
+                        pageCount = parsedPDF.pageCount;
+                        console.log(`Parsed PDF locally: ${pdfText.length} characters, ${pageCount} pages`);
+                    } catch (parseError) {
+                        console.error("Error parsing PDF locally:", parseError);
+                        // Continue without text - PDF.ai can still handle queries
+                        console.warn("Both PDF.ai and local parsing failed. PDF will be stored but embeddings won't be created.");
+                    }
                 }
 
                 // Step 3: Store PDF metadata in database
@@ -100,20 +109,34 @@ export const ourFileRouter = {
 
                 // Step 4: Chunk PDF text and store in Pinecone (only if we have text)
                 if (pdfDoc) {
-                    if (pdfText) {
-                        const textChunks = chunkText(pdfText, 1000, 200);
-                        const chunksWithPages = textChunks.map((chunk, idx) => {
-                            // Estimate page number based on chunk position
-                            const estimatedPages = pageCount || 1;
-                            const pageNumber = Math.floor((idx / textChunks.length) * estimatedPages) + 1;
-                            return { text: chunk, pageNumber };
-                        });
+                    if (pdfText && pdfText.trim().length > 0) {
+                        try {
+                            // Chunk the text with proper overlap for better context
+                            const textChunks = chunkText(pdfText, 1000, 200);
+                            const chunksWithPages = textChunks.map((chunk, idx) => {
+                                // Estimate page number based on chunk position
+                                const estimatedPages = pageCount || 1;
+                                const pageNumber = Math.min(
+                                    Math.floor((idx / textChunks.length) * estimatedPages) + 1,
+                                    estimatedPages
+                                );
+                                return { text: chunk.trim(), pageNumber };
+                            }).filter(chunk => chunk.text.length > 0); // Filter out empty chunks
 
-                        await storePdfChunks(pdfDoc.id, metadata.userId, chunksWithPages);
-
-                        console.log(`Stored ${chunksWithPages.length} chunks for PDF ${pdfDoc.id}`);
+                            if (chunksWithPages.length > 0) {
+                                await storePdfChunks(pdfDoc.id, metadata.userId, chunksWithPages);
+                                console.log(`Stored ${chunksWithPages.length} chunks for PDF ${pdfDoc.id} in Pinecone`);
+                            } else {
+                                console.warn(`No valid chunks extracted from PDF ${pdfDoc.id}`);
+                            }
+                        } catch (embeddingError) {
+                            console.error(`Error storing PDF chunks in Pinecone:`, embeddingError);
+                            // Continue even if embedding fails - PDF.ai can still handle queries
+                        }
                     } else if (pdfAiFileId) {
-                        console.log(`PDF ${pdfDoc.id} uploaded to PDF.ai but text extraction will be done on-demand via PDF.ai API`);
+                        console.log(`PDF ${pdfDoc.id} uploaded to PDF.ai but text extraction failed. PDF.ai will handle queries on-demand.`);
+                    } else {
+                        console.warn(`PDF ${pdfDoc.id} has no text content and no PDF.ai file ID. Embeddings cannot be created.`);
                     }
 
                     // !!! Whatever is returned here is sent to the clientside `onClientUploadComplete` callback
