@@ -57,3 +57,45 @@ export const messages = createTable(
   }),
   (t) => [index("message_chat_idx").on(t.chatId)],
 );
+
+export const pdfDocuments = createTable(
+  "pdf_document",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    userId: d.varchar({ length: 256 }).notNull(),
+    fileName: d.varchar({ length: 512 }).notNull(),
+    fileUrl: d.varchar({ length: 1024 }).notNull(),
+    pdfAiFileId: d.varchar({ length: 256 }), // PDF.ai file ID
+    uploadthingFileKey: d.varchar({ length: 512 }), // UploadThing file key
+    pageCount: d.integer(),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    updatedAt: d.timestamp({ withTimezone: true }).$onUpdate(() => new Date()),
+  }),
+  (t) => [index("pdf_user_idx").on(t.userId)],
+);
+
+export const chatPdfReferences = createTable(
+  "chat_pdf_reference",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    chatId: d
+      .integer()
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    pdfDocumentId: d
+      .integer()
+      .notNull()
+      .references(() => pdfDocuments.id, { onDelete: "cascade" }),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  }),
+  (t) => [
+    index("chat_pdf_chat_idx").on(t.chatId),
+    index("chat_pdf_doc_idx").on(t.pdfDocumentId),
+  ],
+);
