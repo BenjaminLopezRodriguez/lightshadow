@@ -8,6 +8,7 @@ import { LoginLink, LogoutLink, RegisterLink } from "@kinde-oss/kinde-auth-nextj
 import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
 import { useRouter, useSearchParams } from "next/navigation";
 import { AddContact } from "./add-contact";
+import { CreateGroupChat } from "./create-group-chat";
 
 export function Sidebar({ className }: { className?: string }) {
     const { user, isAuthenticated, isLoading } = useKindeBrowserClient();
@@ -43,7 +44,12 @@ export function Sidebar({ className }: { className?: string }) {
                     </div>
                     <span className="font-medium">New Chat</span>
                 </Button>
-                {isAuthenticated && <AddContact />}
+                {isAuthenticated && (
+                    <>
+                        <CreateGroupChat />
+                        <AddContact />
+                    </>
+                )}
             </div>
 
             <div className="flex-1 overflow-y-auto px-2 py-2 space-y-6">
