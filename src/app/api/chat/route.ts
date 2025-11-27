@@ -44,6 +44,7 @@ export async function POST(req: Request) {
 
     // Handle PDF document reference
     if (pdfDocumentId) {
+      console.log(`Processing PDF document ID: ${pdfDocumentId} for user: ${user.id}`);
       // Check if PDF belongs to user
       const pdfDoc = await db.query.pdfDocuments.findFirst({
         where: and(
@@ -54,24 +55,32 @@ export async function POST(req: Request) {
 
       if (pdfDoc) {
         pdfDocIds.push(pdfDocumentId);
+        console.log(`PDF document found: ${pdfDoc.fileName}, ID: ${pdfDoc.id}`);
         
         // Create PDF reference for this chat if it doesn't exist
-        const existingRef = await db.query.chatPdfReferences.findFirst({
-          where: and(
-            eq(chatPdfReferences.chatId, currentChatId),
-            eq(chatPdfReferences.pdfDocumentId, pdfDocumentId)
-          ),
-        });
-
-        if (!existingRef && currentChatId) {
-          await db.insert(chatPdfReferences).values({
-            chatId: currentChatId,
-            pdfDocumentId: pdfDocumentId,
+        // Note: currentChatId might be null for first message, so we'll link it after chat creation
+        if (currentChatId) {
+          const existingRef = await db.query.chatPdfReferences.findFirst({
+            where: and(
+              eq(chatPdfReferences.chatId, currentChatId),
+              eq(chatPdfReferences.pdfDocumentId, pdfDocumentId)
+            ),
           });
+
+          if (!existingRef) {
+            await db.insert(chatPdfReferences).values({
+              chatId: currentChatId,
+              pdfDocumentId: pdfDocumentId,
+            });
+            console.log(`Linked PDF ${pdfDocumentId} to chat ${currentChatId}`);
+          }
         }
+      } else {
+        console.warn(`PDF document ${pdfDocumentId} not found or doesn't belong to user ${user.id}`);
       }
     } else if (fileUrl) {
       // Legacy support: if fileUrl is provided, try to find PDF document
+      console.log(`Looking up PDF by fileUrl: ${fileUrl}`);
       const pdfDoc = await db.query.pdfDocuments.findFirst({
         where: and(
           eq(pdfDocuments.fileUrl, fileUrl),
@@ -81,6 +90,7 @@ export async function POST(req: Request) {
 
       if (pdfDoc) {
         pdfDocIds.push(pdfDoc.id);
+        console.log(`Found PDF by URL: ${pdfDoc.fileName}, ID: ${pdfDoc.id}`);
         
         if (currentChatId) {
           const existingRef = await db.query.chatPdfReferences.findFirst({
@@ -95,7 +105,30 @@ export async function POST(req: Request) {
               chatId: currentChatId,
               pdfDocumentId: pdfDoc.id,
             });
+            console.log(`Linked PDF ${pdfDoc.id} to chat ${currentChatId} via URL`);
           }
+        }
+      } else {
+        console.warn(`PDF not found by URL: ${fileUrl}`);
+      }
+    }
+    
+    // If chat was just created and we have a PDF, link it now
+    if (!chatId && currentChatId && pdfDocIds.length > 0) {
+      for (const pdfId of pdfDocIds) {
+        const existingRef = await db.query.chatPdfReferences.findFirst({
+          where: and(
+            eq(chatPdfReferences.chatId, currentChatId),
+            eq(chatPdfReferences.pdfDocumentId, pdfId)
+          ),
+        });
+
+        if (!existingRef) {
+          await db.insert(chatPdfReferences).values({
+            chatId: currentChatId,
+            pdfDocumentId: pdfId,
+          });
+          console.log(`Linked PDF ${pdfId} to newly created chat ${currentChatId}`);
         }
       }
     }
@@ -129,17 +162,30 @@ export async function POST(req: Request) {
       try {
         console.log(`Querying Pinecone for PDF context. PDF IDs: ${pdfDocIds.join(", ")}, User: ${user.id}`);
         
+        // For general questions like "what's in the PDF", use a broader query
+        const isGeneralQuestion = /what'?s?\s+(in|the\s+content\s+of|contained\s+in)|(summarize|describe|tell\s+me\s+about)\s+(the\s+)?pdf/i.test(lastMessage.content);
+        const queryText = isGeneralQuestion 
+          ? "document content summary overview" // Broader query for general questions
+          : lastMessage.content; // Specific query for targeted questions
+        
+        const topK = isGeneralQuestion ? 10 : 5; // Get more chunks for general questions
+        
         const relevantChunks = await queryPdfChunks(
-          lastMessage.content,
+          queryText,
           user.id,
           pdfDocIds,
-          5
+          topK
         );
 
         console.log(`Found ${relevantChunks.length} relevant chunks from Pinecone`);
 
         if (relevantChunks.length > 0) {
-          systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${relevantChunks.map((chunk, idx) => `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context. If the context doesn't contain enough information, acknowledge that but still try to help based on what is available.`;
+          if (isGeneralQuestion) {
+            // For general questions, provide a comprehensive overview
+            systemContext = `You are a helpful assistant. The user has uploaded a PDF document and is asking about its contents. Here are relevant sections from the PDF:\n\n${relevantChunks.map((chunk, idx) => `[Section ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Provide a comprehensive summary of what's in the PDF based on the content above. Reference specific sections and pages when relevant. If the user asks "what's in the PDF", give them a detailed overview of the document's contents.`;
+          } else {
+            systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${relevantChunks.map((chunk, idx) => `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context. If the context doesn't contain enough information, acknowledge that but still try to help based on what is available.`;
+          }
         } else {
           // Even if no chunks found, add a note that PDFs are referenced
           const allUserPdfs = await db.query.pdfDocuments.findMany({

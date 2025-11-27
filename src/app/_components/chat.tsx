@@ -280,12 +280,22 @@ export function Chat() {
                   endpoint="pdfUploader"
                   onClientUploadComplete={(res) => {
                     if (res && res[0]) {
-                      const uploadData = res[0] as any;
+                      // UploadThing wraps the return value from onUploadComplete
+                      const file = res[0];
+                      // The pdfDocumentId might be in the serverData or directly accessible
+                      const serverData = (file as any).serverData || {};
+                      const pdfDocumentId = serverData.pdfDocumentId || (file as any).pdfDocumentId;
+                      
+                      console.log("PDF upload complete:", { file, pdfDocumentId });
+                      
                       setAttachedFile({
-                        url: res[0].url,
-                        name: res[0].name,
-                        pdfDocumentId: uploadData.pdfDocumentId,
+                        url: file.url,
+                        name: file.name,
+                        pdfDocumentId: pdfDocumentId,
                       });
+                      
+                      // Invalidate PDF queries to refresh the list
+                      utils.pdf.getAll.invalidate();
                     }
                   }}
                   onUploadError={(error: Error) => {

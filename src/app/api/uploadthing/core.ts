@@ -87,11 +87,13 @@ export const ourFileRouter = {
                     console.log(`Stored ${chunksWithPages.length} chunks for PDF ${pdfDoc.id}`);
 
                     // !!! Whatever is returned here is sent to the clientside `onClientUploadComplete` callback
+                    // UploadThing passes this as serverData
                     return {
                         uploadedBy: metadata.userId,
                         url: file.url,
                         pdfDocumentId: pdfDoc.id,
                         pdfAiFileId: pdfAiFileId,
+                        fileName: file.name,
                     };
                 } else {
                     throw new Error("Failed to create PDF document record");
