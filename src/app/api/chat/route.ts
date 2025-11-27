@@ -368,7 +368,7 @@ export async function POST(req: Request) {
       const isGeneralQuestion = /what'?s?\s+(in|the\s+content\s+of|contained\s+in)|(summarize|describe|tell\s+me\s+about)\s+(the\s+)?pdf/i.test(lastMessage.content);
       
       const chainOfThoughtInstruction = chainOfThought 
-        ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent."
+        ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Format each stage of your reasoning with '🧠thinking: ' followed by your thought process. For example: '🧠thinking: Let me break down this problem...' Then provide your final answer after the reasoning stages."
         : "";
       
       if (isGeneralQuestion) {
@@ -387,7 +387,7 @@ export async function POST(req: Request) {
         if (referencedPdfs.length > 0 && !systemContext) {
           console.log(`PDFs referenced but no Pinecone context found. PDFs: ${referencedPdfs.map(p => p.fileName).join(", ")}`);
           const chainOfThoughtInstruction = chainOfThought 
-            ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent."
+            ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Format each stage of your reasoning with '🧠thinking: ' followed by your thought process. For example: '🧠thinking: Let me break down this problem...' Then provide your final answer after the reasoning stages."
             : "";
           systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. The PDF content may not be fully indexed yet. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible. If the question is specifically about the PDF content, suggest that the user wait a moment for indexing to complete or try re-uploading the PDF.${chainOfThoughtInstruction}`;
         }
@@ -436,7 +436,7 @@ export async function POST(req: Request) {
     // Add chain of thought instruction if enabled and no system context exists
     let finalSystemContext = systemContext;
     if (chainOfThought && !systemContext) {
-      finalSystemContext = "You are a helpful assistant. IMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent.";
+      finalSystemContext = "You are a helpful assistant. IMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Format each stage of your reasoning with '🧠thinking: ' followed by your thought process. For example: '🧠thinking: Let me break down this problem...' Then provide your final answer after the reasoning stages.";
     }
 
     const messagesWithContext = finalSystemContext
