@@ -115,12 +115,17 @@ export const messages = createTable(
       .references(() => chats.id, { onDelete: "cascade" }),
     role: d.varchar({ length: 32 }).notNull(), // 'user' or 'assistant'
     content: d.text().notNull(),
+    replyToMessageId: d.integer().references(() => messages.id, { onDelete: "set null" }),
+    mentions: d.json().$type<string[]>(), // Array of user IDs mentioned in the message
     createdAt: d
       .timestamp({ withTimezone: true })
       .$defaultFn(() => /* @__PURE__ */ new Date())
       .notNull(),
   }),
-  (t) => [index("message_chat_idx").on(t.chatId)],
+  (t) => [
+    index("message_chat_idx").on(t.chatId),
+    index("message_reply_idx").on(t.replyToMessageId),
+  ],
 );
 
 export const pdfDocuments = createTable(

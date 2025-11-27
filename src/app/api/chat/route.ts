@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    const { messages, chatId, fileUrl, pdfDocumentId, chainOfThought } = await req.json();
+    const { messages, chatId, fileUrl, pdfDocumentId, chainOfThought, replyToMessageId, mentions } = await req.json();
 
     if (!messages || !Array.isArray(messages)) {
       return new Response("Messages array is required", { status: 400 });
@@ -184,6 +184,8 @@ export async function POST(req: Request) {
         chatId: currentChatId,
         role: "user",
         content: lastMessage.content,
+        replyToMessageId: replyToMessageId || null,
+        mentions: mentions && mentions.length > 0 ? mentions : null,
       });
     }
 
