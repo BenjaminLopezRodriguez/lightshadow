@@ -10,6 +10,7 @@ import { api } from "@/trpc/react";
 import { UploadButton } from "@/lib/uploadthing";
 import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
 import { ChainOfThought } from "./chain-of-thought";
+import { MarkdownContent } from "./markdown-content";
 
 interface Message {
   role: "user" | "assistant";
@@ -355,12 +356,18 @@ export function Chat() {
                             : "bg-transparent text-white/90 border border-white/5"
                         )}
                       >
-                        <p className="text-base leading-relaxed whitespace-pre-wrap break-words">
-                          {parsedContent}
-                          {isStreaming && (
-                            <span className="inline-block w-1.5 h-4 ml-1 bg-current animate-pulse" />
-                          )}
-                        </p>
+                        {message.role === "assistant" ? (
+                          <div className="text-base">
+                            <MarkdownContent content={parsedContent} />
+                            {isStreaming && (
+                              <span className="inline-block w-1.5 h-4 ml-1 bg-current animate-pulse" />
+                            )}
+                          </div>
+                        ) : (
+                          <p className="text-base leading-relaxed whitespace-pre-wrap break-words">
+                            {parsedContent}
+                          </p>
+                        )}
                       </div>
                     </div>
 
