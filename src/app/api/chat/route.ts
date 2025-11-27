@@ -105,7 +105,9 @@ export async function POST(req: Request) {
       const chatPdfRefs = await db.query.chatPdfReferences.findMany({
         where: eq(chatPdfReferences.chatId, currentChatId),
       });
-      pdfDocIds = chatPdfRefs.map(ref => ref.pdfDocumentId);
+      const refIds = chatPdfRefs.map(ref => ref.pdfDocumentId);
+      // Merge with any PDF IDs from the current request
+      pdfDocIds = [...new Set([...pdfDocIds, ...refIds])];
     }
 
     const lastMessage = messages[messages.length - 1];
@@ -119,25 +121,55 @@ export async function POST(req: Request) {
       });
     }
 
-    // Check for cached response
-    const cachedResponse = pdfDocIds.length > 0
-      ? await queryCachedResponse(lastMessage.content, user.id, pdfDocIds)
-      : await queryCachedResponse(lastMessage.content, user.id);
-
     let stream;
     let systemContext = "";
 
-    // If PDFs are referenced, query Pinecone for relevant context
+    // Always query Pinecone for PDF context if PDFs are referenced
     if (pdfDocIds.length > 0) {
-      const relevantChunks = await queryPdfChunks(
-        lastMessage.content,
-        user.id,
-        pdfDocIds,
-        5
-      );
+      try {
+        console.log(`Querying Pinecone for PDF context. PDF IDs: ${pdfDocIds.join(", ")}, User: ${user.id}`);
+        
+        const relevantChunks = await queryPdfChunks(
+          lastMessage.content,
+          user.id,
+          pdfDocIds,
+          5
+        );
 
-      if (relevantChunks.length > 0) {
-        systemContext = `You are a helpful assistant answering questions based on the following PDF document context:\n\n${relevantChunks.map((chunk, idx) => `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nUse this context to answer the user's question. If the context doesn't contain enough information, say so.`;
+        console.log(`Found ${relevantChunks.length} relevant chunks from Pinecone`);
+
+        if (relevantChunks.length > 0) {
+          systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${relevantChunks.map((chunk, idx) => `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context. If the context doesn't contain enough information, acknowledge that but still try to help based on what is available.`;
+        } else {
+          // Even if no chunks found, add a note that PDFs are referenced
+          const allUserPdfs = await db.query.pdfDocuments.findMany({
+            where: eq(pdfDocuments.userId, user.id),
+          });
+          const referencedPdfs = allUserPdfs.filter(pdf => pdfDocIds.includes(pdf.id));
+          
+          if (referencedPdfs.length > 0) {
+            systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. However, no relevant context was found in Pinecone for this query. Please acknowledge that you're aware of the PDF but may need more specific information to answer accurately. Try to help based on general knowledge if possible.`;
+            console.warn(`No Pinecone chunks found for PDFs: ${referencedPdfs.map(p => p.id).join(", ")}. Query: "${lastMessage.content}"`);
+          }
+        }
+      } catch (error) {
+        console.error("Error querying Pinecone for PDF context:", error);
+        // Continue without context if Pinecone query fails
+      }
+    }
+
+    // Check for cached response (only if we have context or no PDFs)
+    let cachedResponse: string | null = null;
+    if (pdfDocIds.length > 0 && systemContext) {
+      // Don't use cache if we have fresh PDF context
+      cachedResponse = null;
+    } else {
+      try {
+        cachedResponse = pdfDocIds.length > 0
+          ? await queryCachedResponse(lastMessage.content, user.id, pdfDocIds)
+          : await queryCachedResponse(lastMessage.content, user.id);
+      } catch (error) {
+        console.error("Error querying cached response:", error);
       }
     }
 
@@ -247,6 +279,8 @@ export async function POST(req: Request) {
           ...messages,
         ]
       : messages;
+
+    console.log(`Sending to OpenAI. Has PDF context: ${!!systemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}`);
 
     stream = await openai.chat.completions.create({
       model: "gpt-4o-mini",

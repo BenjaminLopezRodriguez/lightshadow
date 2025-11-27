@@ -85,29 +85,51 @@ export async function queryPdfChunks(
   pdfDocumentIds?: number[],
   topK: number = 5
 ): Promise<Array<{ text: string; pdfDocumentId: number; pageNumber: number; score: number }>> {
-  const index = await getPineconeIndex();
-  const queryEmbedding = await generateEmbedding(query);
+  try {
+    const index = await getPineconeIndex();
+    const queryEmbedding = await generateEmbedding(query);
 
-  const filter: any = { userId };
-  if (pdfDocumentIds && pdfDocumentIds.length > 0) {
-    filter.pdfDocumentId = { $in: pdfDocumentIds };
+    // Build filter - Pinecone filter syntax
+    const filter: any = {};
+    
+    // Add userId filter
+    if (userId) {
+      filter.userId = userId;
+    }
+    
+    // Add PDF document IDs filter - use $in for array
+    if (pdfDocumentIds && pdfDocumentIds.length > 0) {
+      if (pdfDocumentIds.length === 1) {
+        filter.pdfDocumentId = pdfDocumentIds[0];
+      } else {
+        filter.pdfDocumentId = { $in: pdfDocumentIds };
+      }
+    }
+
+    console.log(`Querying Pinecone with filter:`, JSON.stringify(filter));
+
+    const queryResponse = await index.query({
+      vector: queryEmbedding,
+      topK,
+      includeMetadata: true,
+      filter,
+    });
+
+    const results = (
+      queryResponse.matches?.map((match) => ({
+        text: (match.metadata?.text as string) || "",
+        pdfDocumentId: (match.metadata?.pdfDocumentId as number) || 0,
+        pageNumber: (match.metadata?.pageNumber as number) || 0,
+        score: match.score || 0,
+      })) || []
+    ).filter(r => r.text.length > 0); // Filter out empty results
+
+    console.log(`Pinecone query returned ${results.length} results`);
+    return results;
+  } catch (error) {
+    console.error("Error querying Pinecone:", error);
+    throw error;
   }
-
-  const queryResponse = await index.query({
-    vector: queryEmbedding,
-    topK,
-    includeMetadata: true,
-    filter,
-  });
-
-  return (
-    queryResponse.matches?.map((match) => ({
-      text: (match.metadata?.text as string) || "",
-      pdfDocumentId: (match.metadata?.pdfDocumentId as number) || 0,
-      pageNumber: (match.metadata?.pageNumber as number) || 0,
-      score: match.score || 0,
-    })) || []
-  );
 }
 
 // Store chat response in Pinecone for caching
@@ -154,12 +176,16 @@ export async function queryCachedResponse(
   const queryEmbedding = await generateEmbedding(query);
 
   const filter: any = {
-    userId,
+    userId: userId,
     type: "chat_response",
   };
 
   if (pdfDocumentIds && pdfDocumentIds.length > 0) {
-    filter.pdfDocumentIds = { $in: pdfDocumentIds };
+    if (pdfDocumentIds.length === 1) {
+      filter.pdfDocumentIds = pdfDocumentIds[0];
+    } else {
+      filter.pdfDocumentIds = { $in: pdfDocumentIds };
+    }
   }
 
   const queryResponse = await index.query({

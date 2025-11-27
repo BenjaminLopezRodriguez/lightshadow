@@ -117,6 +117,10 @@ export function Chat() {
       if (newChatId && !chatId) {
         router.push(`/?chatId=${newChatId}`);
         utils.chat.getAll.invalidate();
+        utils.pdf.getByChatId.invalidate({ chatId: parseInt(newChatId) });
+      } else if (chatId) {
+        // Invalidate PDF references for this chat
+        utils.pdf.getByChatId.invalidate({ chatId: parseInt(chatId) });
       }
 
       const reader = response.body?.getReader();
@@ -137,7 +141,8 @@ export function Chat() {
       // Add completed message to messages array
       setMessages([...newMessages, { role: "assistant", content: accumulatedContent }]);
       setStreamingContent("");
-      setAttachedFile(null); // Clear attached file after sending
+      // Don't clear attached file - keep it so PDF context persists in the chat
+      // setAttachedFile(null); // Clear attached file after sending
     } catch (error: any) {
       if (error.name === "AbortError") {
         console.log("Request aborted");
