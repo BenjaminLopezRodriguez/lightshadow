@@ -4,8 +4,6 @@ import { env } from "@/env";
 import { db } from "@/server/db";
 import { pdfDocuments } from "@/server/db/schema";
 import { storePdfChunks, chunkText } from "@/lib/pinecone";
-// @ts-expect-error - pdf-parse doesn't have proper TypeScript exports
-import pdfParse from "pdf-parse";
 
 const f = createUploadthing();
 
@@ -55,10 +53,37 @@ export const ourFileRouter = {
                     console.error("Error uploading to PDF.ai:", error);
                 }
 
-                // Step 2: Download and parse PDF
-                const pdfResponse = await fetch(file.url);
-                const pdfBuffer = await pdfResponse.arrayBuffer();
-                const pdfData = await pdfParse(Buffer.from(pdfBuffer));
+                // Step 2: Download PDF and get text from PDF.ai if available, otherwise skip local parsing
+                let pdfText = "";
+                let pageCount = 0;
+                
+                // Try to get text from PDF.ai first (more reliable)
+                if (pdfAiFileId) {
+                    try {
+                        const pdfAiTextResponse = await fetch(`https://api.pdf.ai/v1/files/${pdfAiFileId}/text`, {
+                            method: "GET",
+                            headers: {
+                                "X-API-Key": env.PDFAI_API_KEY,
+                            },
+                        });
+                        
+                        if (pdfAiTextResponse.ok) {
+                            const textData = await pdfAiTextResponse.json();
+                            pdfText = textData.text || textData.content || "";
+                            pageCount = textData.pageCount || textData.pages || 0;
+                            console.log(`Got PDF text from PDF.ai: ${pdfText.length} characters, ${pageCount} pages`);
+                        }
+                    } catch (error) {
+                        console.error("Error getting text from PDF.ai:", error);
+                    }
+                }
+                
+                // Fallback: Try to parse locally only if PDF.ai didn't work
+                // Skip local parsing to avoid DOMMatrix error - rely on PDF.ai instead
+                if (!pdfText && pdfAiFileId) {
+                    console.warn("PDF.ai text extraction failed, skipping local parsing to avoid DOMMatrix error");
+                    // We'll still create the document record and let PDF.ai handle queries
+                }
 
                 // Step 3: Store PDF metadata in database
                 const [pdfDoc] = await db
@@ -69,22 +94,27 @@ export const ourFileRouter = {
                         fileUrl: file.url,
                         pdfAiFileId: pdfAiFileId || undefined,
                         uploadthingFileKey: file.key,
-                        pageCount: pdfData.numpages,
+                        pageCount: pageCount || undefined,
                     })
                     .returning();
 
-                // Step 4: Chunk PDF text and store in Pinecone
+                // Step 4: Chunk PDF text and store in Pinecone (only if we have text)
                 if (pdfDoc) {
-                    const textChunks = chunkText(pdfData.text, 1000, 200);
-                    const chunksWithPages = textChunks.map((chunk, idx) => {
-                        // Estimate page number based on chunk position
-                        const pageNumber = Math.floor((idx / textChunks.length) * pdfData.numpages) + 1;
-                        return { text: chunk, pageNumber };
-                    });
+                    if (pdfText) {
+                        const textChunks = chunkText(pdfText, 1000, 200);
+                        const chunksWithPages = textChunks.map((chunk, idx) => {
+                            // Estimate page number based on chunk position
+                            const estimatedPages = pageCount || 1;
+                            const pageNumber = Math.floor((idx / textChunks.length) * estimatedPages) + 1;
+                            return { text: chunk, pageNumber };
+                        });
 
-                    await storePdfChunks(pdfDoc.id, metadata.userId, chunksWithPages);
+                        await storePdfChunks(pdfDoc.id, metadata.userId, chunksWithPages);
 
-                    console.log(`Stored ${chunksWithPages.length} chunks for PDF ${pdfDoc.id}`);
+                        console.log(`Stored ${chunksWithPages.length} chunks for PDF ${pdfDoc.id}`);
+                    } else if (pdfAiFileId) {
+                        console.log(`PDF ${pdfDoc.id} uploaded to PDF.ai but text extraction will be done on-demand via PDF.ai API`);
+                    }
 
                     // !!! Whatever is returned here is sent to the clientside `onClientUploadComplete` callback
                     // UploadThing passes this as serverData

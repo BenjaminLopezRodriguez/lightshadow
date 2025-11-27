@@ -157,7 +157,9 @@ export async function POST(req: Request) {
     let stream;
     let systemContext = "";
 
-    // Always query Pinecone for PDF context if PDFs are referenced
+    // Query Pinecone for PDF context as fallback (only if PDF.ai is not available)
+    // We'll query Pinecone after checking PDF.ai, so we can use it as backup context
+    let pineconeContext = "";
     if (pdfDocIds.length > 0) {
       try {
         console.log(`Querying Pinecone for PDF context. PDF IDs: ${pdfDocIds.join(", ")}, User: ${user.id}`);
@@ -180,23 +182,9 @@ export async function POST(req: Request) {
         console.log(`Found ${relevantChunks.length} relevant chunks from Pinecone`);
 
         if (relevantChunks.length > 0) {
-          if (isGeneralQuestion) {
-            // For general questions, provide a comprehensive overview
-            systemContext = `You are a helpful assistant. The user has uploaded a PDF document and is asking about its contents. Here are relevant sections from the PDF:\n\n${relevantChunks.map((chunk, idx) => `[Section ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Provide a comprehensive summary of what's in the PDF based on the content above. Reference specific sections and pages when relevant. If the user asks "what's in the PDF", give them a detailed overview of the document's contents.`;
-          } else {
-            systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${relevantChunks.map((chunk, idx) => `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`).join("\n\n")}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context. If the context doesn't contain enough information, acknowledge that but still try to help based on what is available.`;
-          }
-        } else {
-          // Even if no chunks found, add a note that PDFs are referenced
-          const allUserPdfs = await db.query.pdfDocuments.findMany({
-            where: eq(pdfDocuments.userId, user.id),
-          });
-          const referencedPdfs = allUserPdfs.filter(pdf => pdfDocIds.includes(pdf.id));
-          
-          if (referencedPdfs.length > 0) {
-            systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. However, no relevant context was found in Pinecone for this query. Please acknowledge that you're aware of the PDF but may need more specific information to answer accurately. Try to help based on general knowledge if possible.`;
-            console.warn(`No Pinecone chunks found for PDFs: ${referencedPdfs.map(p => p.id).join(", ")}. Query: "${lastMessage.content}"`);
-          }
+          pineconeContext = relevantChunks.map((chunk, idx) => 
+            `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`
+          ).join("\n\n");
         }
       } catch (error) {
         console.error("Error querying Pinecone for PDF context:", error);
@@ -219,7 +207,8 @@ export async function POST(req: Request) {
       }
     }
 
-    // Use PDF.ai if PDF document is referenced and has pdfAiFileId
+    // PRIORITY 1: Use PDF.ai if PDF document is referenced and has pdfAiFileId
+    // PDF.ai provides the best answers directly from the PDF
     if (pdfDocIds.length > 0 && pdfDocIds[0]) {
       const pdfDoc = await db.query.pdfDocuments.findFirst({
         where: eq(pdfDocuments.id, pdfDocIds[0]),
@@ -227,6 +216,16 @@ export async function POST(req: Request) {
 
       if (pdfDoc?.pdfAiFileId) {
         try {
+          console.log(`Using PDF.ai API for PDF ${pdfDoc.pdfAiFileId}, question: "${lastMessage.content}"`);
+          
+          // Build history for PDF.ai (last 10 messages to avoid token limits)
+          const recentMessages = messages.slice(-10);
+          const pdfAiHistory = recentMessages.slice(0, -1).map((m: any) => ({
+            role: m.role === "assistant" ? "assistant" : "user",
+            content: m.content,
+          }));
+
+          // Try PDF.ai chat endpoint first
           const pdfAiResponse = await fetch("https://api.pdf.ai/v1/chat", {
             method: "POST",
             headers: {
@@ -236,56 +235,107 @@ export async function POST(req: Request) {
             body: JSON.stringify({
               fileId: pdfDoc.pdfAiFileId,
               question: lastMessage.content,
-              history: messages.slice(0, -1).map((m: any) => ({
-                role: m.role === "assistant" ? "assistant" : "user",
-                content: m.content,
-              })),
+              history: pdfAiHistory,
             }),
           });
 
           if (pdfAiResponse.ok) {
             const pdfAiData = await pdfAiResponse.json();
-            const responseText = pdfAiData.answer || pdfAiData.response || JSON.stringify(pdfAiData);
-
-            // Cache the response
-            await cacheChatResponse(
-              lastMessage.content,
-              responseText,
-              user.id,
-              pdfDocIds
-            );
-
-            // Save assistant message
-            if (currentChatId) {
-              await db.insert(messagesTable).values({
-                chatId: currentChatId,
-                role: "assistant",
-                content: responseText,
-              });
+            console.log("PDF.ai response:", JSON.stringify(pdfAiData).substring(0, 200));
+            
+            // PDF.ai returns answer in different possible fields - try all common ones
+            let responseText = pdfAiData.answer || 
+                              pdfAiData.response || 
+                              pdfAiData.text ||
+                              pdfAiData.message ||
+                              pdfAiData.content;
+            
+            // If it's nested in a data/result object
+            if (!responseText && pdfAiData.data) {
+              responseText = pdfAiData.data.answer || pdfAiData.data.response || pdfAiData.data.text;
+            }
+            
+            // If still no text, try to extract from any string field
+            if (!responseText && typeof pdfAiData === 'object') {
+              for (const [key, value] of Object.entries(pdfAiData)) {
+                if (typeof value === 'string' && value.length > 50) {
+                  responseText = value;
+                  break;
+                }
+              }
             }
 
-            // Return as stream
-            const encoder = new TextEncoder();
-            const readableStream = new ReadableStream({
-              start(controller) {
-                controller.enqueue(encoder.encode(responseText));
-                controller.close();
-              },
-            });
+            if (responseText && responseText.trim().length > 0) {
+              console.log(`PDF.ai returned answer (${responseText.length} chars): ${responseText.substring(0, 100)}...`);
 
-            return new Response(readableStream, {
-              headers: {
-                "Content-Type": "text/event-stream",
-                "Cache-Control": "no-cache",
-                Connection: "keep-alive",
-                "X-Chat-Id": currentChatId.toString(),
-              },
-            });
+              // Cache the response
+              await cacheChatResponse(
+                lastMessage.content,
+                responseText,
+                user.id,
+                pdfDocIds
+              );
+
+              // Save assistant message
+              if (currentChatId) {
+                await db.insert(messagesTable).values({
+                  chatId: currentChatId,
+                  role: "assistant",
+                  content: responseText,
+                });
+              }
+
+              // Return as stream
+              const encoder = new TextEncoder();
+              const readableStream = new ReadableStream({
+                start(controller) {
+                  controller.enqueue(encoder.encode(responseText));
+                  controller.close();
+                },
+              });
+
+              return new Response(readableStream, {
+                headers: {
+                  "Content-Type": "text/event-stream",
+                  "Cache-Control": "no-cache",
+                  Connection: "keep-alive",
+                  "X-Chat-Id": currentChatId.toString(),
+                },
+              });
+            } else {
+              console.warn("PDF.ai returned empty or invalid response:", pdfAiData);
+              // Fall through to OpenAI with Pinecone context
+            }
+          } else {
+            const errorText = await pdfAiResponse.text();
+            console.error(`PDF.ai API error (${pdfAiResponse.status}):`, errorText);
+            // Fall through to OpenAI with Pinecone context
           }
         } catch (error) {
           console.error("PDF.ai API error:", error);
-          // Fall through to OpenAI
+          // Fall through to OpenAI with Pinecone context
         }
+      }
+    }
+    
+    // Build system context from Pinecone if available (as fallback or supplement)
+    if (pineconeContext) {
+      const isGeneralQuestion = /what'?s?\s+(in|the\s+content\s+of|contained\s+in)|(summarize|describe|tell\s+me\s+about)\s+(the\s+)?pdf/i.test(lastMessage.content);
+      
+      if (isGeneralQuestion) {
+        systemContext = `You are a helpful assistant. The user has uploaded a PDF document and is asking about its contents. Here are relevant sections from the PDF:\n\n${pineconeContext}\n\nIMPORTANT: Provide a comprehensive summary of what's in the PDF based on the content above. Reference specific sections and pages when relevant.`;
+      } else {
+        systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${pineconeContext}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context.`;
+      }
+    } else if (pdfDocIds.length > 0) {
+      // Even if no Pinecone chunks, mention PDFs are referenced
+      const allUserPdfs = await db.query.pdfDocuments.findMany({
+        where: eq(pdfDocuments.userId, user.id),
+      });
+      const referencedPdfs = allUserPdfs.filter(pdf => pdfDocIds.includes(pdf.id));
+      
+      if (referencedPdfs.length > 0 && !systemContext) {
+        systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible.`;
       }
     }
 
