@@ -19,7 +19,7 @@ export async function POST(req: Request) {
       return new Response("Unauthorized", { status: 401 });
     }
 
-    const { messages, chatId, fileUrl, pdfDocumentId } = await req.json();
+    const { messages, chatId, fileUrl, pdfDocumentId, chainOfThought } = await req.json();
 
     if (!messages || !Array.isArray(messages)) {
       return new Response("Messages array is required", { status: 400 });
@@ -367,10 +367,14 @@ export async function POST(req: Request) {
     if (pineconeContext) {
       const isGeneralQuestion = /what'?s?\s+(in|the\s+content\s+of|contained\s+in)|(summarize|describe|tell\s+me\s+about)\s+(the\s+)?pdf/i.test(lastMessage.content);
       
+      const chainOfThoughtInstruction = chainOfThought 
+        ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent."
+        : "";
+      
       if (isGeneralQuestion) {
-        systemContext = `You are a helpful assistant. The user has uploaded a PDF document and is asking about its contents. Here are relevant sections from the PDF:\n\n${pineconeContext}\n\nIMPORTANT: Provide a comprehensive summary of what's in the PDF based on the content above. Reference specific sections and pages when relevant.`;
+        systemContext = `You are a helpful assistant. The user has uploaded a PDF document and is asking about its contents. Here are relevant sections from the PDF:\n\n${pineconeContext}\n\nIMPORTANT: Provide a comprehensive summary of what's in the PDF based on the content above. Reference specific sections and pages when relevant.${chainOfThoughtInstruction}`;
       } else {
-        systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${pineconeContext}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context.`;
+        systemContext = `You are a helpful assistant answering questions based on the following PDF document context. Always reference the PDF content when answering questions:\n\n${pineconeContext}\n\nIMPORTANT: Use the PDF context above to answer the user's question. If the question is about something in the PDF, reference specific details from the context.${chainOfThoughtInstruction}`;
       }
     } else if (pdfDocIds.length > 0) {
       // Even if no Pinecone chunks, mention PDFs are referenced
@@ -382,7 +386,10 @@ export async function POST(req: Request) {
         
         if (referencedPdfs.length > 0 && !systemContext) {
           console.log(`PDFs referenced but no Pinecone context found. PDFs: ${referencedPdfs.map(p => p.fileName).join(", ")}`);
-          systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. The PDF content may not be fully indexed yet. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible. If the question is specifically about the PDF content, suggest that the user wait a moment for indexing to complete or try re-uploading the PDF.`;
+          const chainOfThoughtInstruction = chainOfThought 
+            ? "\n\nIMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent."
+            : "";
+          systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. The PDF content may not be fully indexed yet. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible. If the question is specifically about the PDF content, suggest that the user wait a moment for indexing to complete or try re-uploading the PDF.${chainOfThoughtInstruction}`;
         }
       } catch (dbError) {
         console.error("Error fetching PDF documents for context:", dbError);
@@ -426,9 +433,15 @@ export async function POST(req: Request) {
       content: typeof msg.content === "string" ? msg.content : String(msg.content || ""),
     }));
 
-    const messagesWithContext = systemContext
+    // Add chain of thought instruction if enabled and no system context exists
+    let finalSystemContext = systemContext;
+    if (chainOfThought && !systemContext) {
+      finalSystemContext = "You are a helpful assistant. IMPORTANT: When answering, think step-by-step. Show your reasoning process by breaking down the problem, considering different aspects, and explaining your thought process before providing the final answer. Use phrases like 'Let me think through this...', 'First, I need to consider...', 'Based on this analysis...' to make your reasoning transparent.";
+    }
+
+    const messagesWithContext = finalSystemContext
       ? [
-          { role: "system" as const, content: systemContext },
+          { role: "system" as const, content: finalSystemContext },
           ...formattedMessages,
         ]
       : formattedMessages;
@@ -448,7 +461,7 @@ export async function POST(req: Request) {
       );
     }
 
-    console.log(`Sending to OpenAI. Has PDF context: ${!!systemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}, Messages: ${messagesWithContext.length}`);
+    console.log(`Sending to OpenAI. Has PDF context: ${!!finalSystemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}, Messages: ${messagesWithContext.length}, Chain of Thought: ${chainOfThought || false}`);
 
     try {
       stream = await openai.chat.completions.create({
