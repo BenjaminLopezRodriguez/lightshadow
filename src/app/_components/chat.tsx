@@ -9,10 +9,18 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
 import { UploadButton } from "@/lib/uploadthing";
 import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
+import { ChainOfThought } from "./chain-of-thought";
 
 interface Message {
   role: "user" | "assistant";
   content: string;
+  thoughts?: Array<{ id: number; thought: string; timestamp: number }>;
+}
+
+interface ThoughtStage {
+  id: number;
+  thought: string;
+  timestamp: number;
 }
 
 export function Chat() {
@@ -20,6 +28,7 @@ export function Chat() {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [streamingContent, setStreamingContent] = useState("");
+  const [streamingThoughts, setStreamingThoughts] = useState<ThoughtStage[]>([]);
   const [attachedFile, setAttachedFile] = useState<{ url: string; name: string; pdfDocumentId?: number } | null>(null);
   const [chatPdfRefs, setChatPdfRefs] = useState<Array<{ id: number; fileName: string }>>([]);
   const [chainOfThought, setChainOfThought] = useState(false);
@@ -69,6 +78,63 @@ export function Chat() {
     scrollToBottom();
   }, [messages, streamingContent]);
 
+  // Parse chain of thought reasoning from content
+  const parseChainOfThought = (content: string): { thoughts: ThoughtStage[]; cleanContent: string } => {
+    if (!chainOfThought) {
+      return { thoughts: [], cleanContent: content };
+    }
+
+    const thoughts: ThoughtStage[] = [];
+    let cleanContent = content;
+    
+    // Extract thoughts marked with 🧠thinking: (supports multi-line)
+    // Match pattern: 🧠thinking: [content until next 🧠thinking: or end of reasoning section]
+    const explicitThoughtPattern = /🧠\s*thinking\s*:\s*([\s\S]*?)(?=🧠\s*thinking\s*:|$)/gi;
+    let match;
+    let thoughtId = 0;
+    
+    while ((match = explicitThoughtPattern.exec(content)) !== null) {
+      const thoughtText = match[1].trim();
+      if (thoughtText.length > 0) {
+        thoughts.push({
+          id: thoughtId++,
+          thought: thoughtText,
+          timestamp: Date.now() + thoughtId * 100,
+        });
+      }
+    }
+
+    // Remove all thought markers from content
+    if (thoughts.length > 0) {
+      // Remove all 🧠thinking: markers and their content
+      cleanContent = content.replace(/🧠\s*thinking\s*:\s*[\s\S]*?(?=🧠\s*thinking\s*:|$)/gi, "").trim();
+    }
+
+    // Also look for reasoning phrases when chain of thought is enabled but no explicit markers found
+    if (thoughts.length === 0 && chainOfThought) {
+      const reasoningPattern = /(Let me think through this[^\.]+\.|First, I need to consider[^\.]+\.|Based on this analysis[^\.]+\.)/gi;
+      let reasoningMatch;
+      while ((reasoningMatch = reasoningPattern.exec(content)) !== null) {
+        const thoughtText = reasoningMatch[1].trim();
+        if (thoughtText.length > 10) {
+          thoughts.push({
+            id: thoughtId++,
+            thought: thoughtText,
+            timestamp: Date.now() + thoughtId * 100,
+          });
+        }
+      }
+    }
+
+    // Clean up extra whitespace and empty lines
+    cleanContent = cleanContent
+      .replace(/\n{3,}/g, "\n\n")
+      .replace(/^\s+|\s+$/g, "")
+      .trim();
+
+    return { thoughts, cleanContent };
+  };
+
   const handleSubmit = async (e?: React.FormEvent, value?: string) => {
     e?.preventDefault();
     const contentToSubmit = value || input;
@@ -85,6 +151,7 @@ export function Chat() {
     setInput("");
     setIsLoading(true);
     setStreamingContent("");
+    setStreamingThoughts([]);
 
     // Cancel any existing request
     if (abortControllerRef.current) {
@@ -153,6 +220,12 @@ export function Chat() {
             const chunk = decoder.decode(value, { stream: true });
             accumulatedContent += chunk;
             setStreamingContent(accumulatedContent);
+            
+            // Parse chain of thought reasoning in real-time
+            if (chainOfThought) {
+              const parsed = parseChainOfThought(accumulatedContent);
+              setStreamingThoughts(parsed.thoughts);
+            }
           }
         } catch (streamError) {
           console.error("Error reading stream:", streamError);
@@ -163,9 +236,17 @@ export function Chat() {
         }
       }
 
+      // Parse final content for chain of thought
+      const parsed = parseChainOfThought(accumulatedContent);
+      
       // Add completed message to messages array
-      setMessages([...newMessages, { role: "assistant", content: accumulatedContent }]);
+      setMessages([...newMessages, { 
+        role: "assistant", 
+        content: parsed.cleanContent,
+        thoughts: parsed.thoughts.length > 0 ? parsed.thoughts : undefined
+      }]);
       setStreamingContent("");
+      setStreamingThoughts([]);
       // Don't clear attached file - keep it so PDF context persists in the chat
       // setAttachedFile(null); // Clear attached file after sending
     } catch (error: any) {
@@ -185,6 +266,15 @@ export function Chat() {
       setIsLoading(false);
       abortControllerRef.current = null;
     }
+  };
+
+  // Get thoughts for streaming or completed messages
+  const getThoughtsForMessage = (index: number): ThoughtStage[] => {
+    if (index === displayMessages.length - 1 && streamingContent && isLoading) {
+      return streamingThoughts;
+    }
+    const message = messages[index];
+    return message?.thoughts || [];
   };
 
   const displayMessages = [
@@ -227,43 +317,62 @@ export function Chat() {
           </div>
         ) : (
           <div className="w-full max-w-3xl mx-auto space-y-8">
-            {displayMessages.map((message, index) => (
-              <div
-                key={index}
-                className={`flex gap-4 ${message.role === "user" ? "justify-end" : "justify-start"
-                  }`}
-              >
-                {message.role === "assistant" && (
-                  <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1 shadow-lg shadow-indigo-500/20">
-                    <Bot className="w-5 h-5 text-white" />
-                  </div>
-                )}
+            {displayMessages.map((message, index) => {
+              const thoughts = getThoughtsForMessage(index);
+              const isStreaming = index === displayMessages.length - 1 && streamingContent && isLoading;
+              const parsedContent = chainOfThought && message.role === "assistant" 
+                ? parseChainOfThought(message.content).cleanContent 
+                : message.content;
 
-                <div
-                  className={cn(
-                    "max-w-[85%] rounded-2xl px-6 py-4 shadow-sm",
-                    message.role === "user"
-                      ? "bg-white text-black ml-12"
-                      : "bg-transparent text-white/90 border border-white/5"
-                  )}
-                >
-                  <p className="text-base leading-relaxed whitespace-pre-wrap break-words">
-                    {message.content}
-                    {index === displayMessages.length - 1 &&
-                      streamingContent &&
-                      isLoading && (
-                        <span className="inline-block w-1.5 h-4 ml-1 bg-current animate-pulse" />
+              return (
+                <div key={index} className="w-full">
+                  <div
+                    className={`flex gap-4 ${message.role === "user" ? "justify-end" : "justify-start"
+                      }`}
+                  >
+                    {message.role === "assistant" && (
+                      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1 shadow-lg shadow-indigo-500/20">
+                        <Bot className="w-5 h-5 text-white" />
+                      </div>
+                    )}
+
+                    <div className="flex-1 max-w-[85%] flex flex-col gap-2">
+                      {/* Chain of Thought Component */}
+                      {message.role === "assistant" && (thoughts.length > 0 || (isStreaming && chainOfThought)) && (
+                        <div className="mb-2">
+                          <ChainOfThought 
+                            thoughts={thoughts} 
+                            isStreaming={isStreaming && chainOfThought}
+                          />
+                        </div>
                       )}
-                  </p>
-                </div>
 
-                {message.role === "user" && (
-                  <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
-                    <User className="w-5 h-5 text-white" />
+                      <div
+                        className={cn(
+                          "rounded-2xl px-6 py-4 shadow-sm",
+                          message.role === "user"
+                            ? "bg-white text-black ml-12"
+                            : "bg-transparent text-white/90 border border-white/5"
+                        )}
+                      >
+                        <p className="text-base leading-relaxed whitespace-pre-wrap break-words">
+                          {parsedContent}
+                          {isStreaming && (
+                            <span className="inline-block w-1.5 h-4 ml-1 bg-current animate-pulse" />
+                          )}
+                        </p>
+                      </div>
+                    </div>
+
+                    {message.role === "user" && (
+                      <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
+                        <User className="w-5 h-5 text-white" />
+                      </div>
+                    )}
                   </div>
-                )}
-              </div>
-            ))}
+                </div>
+              );
+            })}
             <div ref={messagesEndRef} />
           </div>
         )}
