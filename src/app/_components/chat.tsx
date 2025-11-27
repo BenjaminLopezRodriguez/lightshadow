@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Send, ChevronDown, Sparkles, Bot, User, Paperclip, FileText, X } from "lucide-react";
+import { Send, ChevronDown, Sparkles, Bot, User, Paperclip, FileText, X, Brain } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "@/trpc/react";
@@ -21,6 +22,7 @@ export function Chat() {
   const [streamingContent, setStreamingContent] = useState("");
   const [attachedFile, setAttachedFile] = useState<{ url: string; name: string; pdfDocumentId?: number } | null>(null);
   const [chatPdfRefs, setChatPdfRefs] = useState<Array<{ id: number; fileName: string }>>([]);
+  const [chainOfThought, setChainOfThought] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -105,6 +107,7 @@ export function Chat() {
           chatId: chatId ? parseInt(chatId) : undefined,
           fileUrl: attachedFile?.url,
           pdfDocumentId: attachedFile?.pdfDocumentId,
+          chainOfThought: chainOfThought,
         }),
         signal: abortControllerRef.current.signal,
       });
@@ -352,11 +355,20 @@ export function Chat() {
             </div>
           </form>
 
-          {/* Model Selector */}
-          <div className="flex justify-center">
+          {/* Model Selector and Chain of Thought Toggle */}
+          <div className="flex justify-center items-center gap-4">
             <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs font-medium text-white/40 hover:bg-white/10 hover:text-white/60 transition-colors cursor-pointer">
               <span>Lumi 1.0 (GPT-4o)</span>
               <ChevronDown className="w-3 h-3" />
+            </div>
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs font-medium text-white/60">
+              <Brain className="w-3 h-3" />
+              <span>Chain of Thought</span>
+              <Switch
+                checked={chainOfThought}
+                onCheckedChange={setChainOfThought}
+                className="data-[state=checked]:bg-indigo-500"
+              />
             </div>
           </div>
         </div>
