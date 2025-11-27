@@ -177,8 +177,27 @@ export async function queryPdfChunks(
   topK: number = 5
 ): Promise<Array<{ text: string; pdfDocumentId: number; pageNumber: number; score: number }>> {
   try {
+    // Validate inputs
+    if (!query || query.trim().length === 0) {
+      console.warn("Empty query provided to queryPdfChunks");
+      return [];
+    }
+
+    if (!userId || userId.trim().length === 0) {
+      console.warn("Empty userId provided to queryPdfChunks");
+      return [];
+    }
+
     const index = await getPineconeIndex();
-    const queryEmbedding = await generateEmbedding(query);
+    
+    // Generate embedding with error handling
+    let queryEmbedding: number[];
+    try {
+      queryEmbedding = await generateEmbedding(query);
+    } catch (embeddingError) {
+      console.error("Error generating embedding for Pinecone query:", embeddingError);
+      throw new Error(`Failed to generate embedding: ${embeddingError instanceof Error ? embeddingError.message : "Unknown error"}`);
+    }
 
     // Build filter - Pinecone filter syntax
     const filter: any = {};
@@ -219,6 +238,17 @@ export async function queryPdfChunks(
     return results;
   } catch (error) {
     console.error("Error querying Pinecone:", error);
+    // Log detailed error information
+    if (error instanceof Error) {
+      console.error("Pinecone query error details:", {
+        message: error.message,
+        stack: error.stack,
+        query: query.substring(0, 100),
+        userId,
+        pdfDocumentIds,
+      });
+    }
+    // Re-throw to be handled by caller
     throw error;
   }
 }

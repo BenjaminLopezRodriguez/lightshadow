@@ -109,8 +109,22 @@ export function Chat() {
         signal: abortControllerRef.current.signal,
       });
 
+      // Check if response is JSON error
+      const contentType = response.headers.get("content-type");
+      if (contentType?.includes("application/json")) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || errorData.error || "Failed to get response");
+      }
+
       if (!response.ok) {
-        throw new Error("Failed to get response");
+        // Try to get error message from response
+        try {
+          const errorData = await response.json();
+          throw new Error(errorData.message || errorData.error || `Server error: ${response.status}`);
+        } catch (e) {
+          // If not JSON, use status text
+          throw new Error(`Failed to get response: ${response.status} ${response.statusText}`);
+        }
       }
 
       const newChatId = response.headers.get("X-Chat-Id");
@@ -128,13 +142,21 @@ export function Chat() {
       let accumulatedContent = "";
 
       if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
 
-          const chunk = decoder.decode(value, { stream: true });
-          accumulatedContent += chunk;
-          setStreamingContent(accumulatedContent);
+            const chunk = decoder.decode(value, { stream: true });
+            accumulatedContent += chunk;
+            setStreamingContent(accumulatedContent);
+          }
+        } catch (streamError) {
+          console.error("Error reading stream:", streamError);
+          // If we have some content, use it; otherwise throw error
+          if (accumulatedContent.trim().length === 0) {
+            throw streamError;
+          }
         }
       }
 

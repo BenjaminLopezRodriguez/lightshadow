@@ -218,10 +218,16 @@ export async function POST(req: Request) {
           pineconeContext = relevantChunks.map((chunk, idx) => 
             `[Context ${idx + 1}, Page ${chunk.pageNumber}]:\n${chunk.text}`
           ).join("\n\n");
+        } else {
+          console.warn("No relevant chunks found in Pinecone for this query");
         }
       } catch (error) {
         console.error("Error querying Pinecone for PDF context:", error);
-        // Continue without context if Pinecone query fails
+        // Log detailed error for debugging
+        if (error instanceof Error) {
+          console.error("Pinecone error details:", error.message, error.stack);
+        }
+        // Continue without context if Pinecone query fails - don't fail the entire request
       }
     }
 
@@ -343,11 +349,16 @@ export async function POST(req: Request) {
           } else {
             const errorText = await pdfAiResponse.text();
             console.error(`PDF.ai API error (${pdfAiResponse.status}):`, errorText);
-            // Fall through to OpenAI with Pinecone context
+            // Log but continue - fall through to OpenAI with Pinecone context
+            // Don't throw - let the fallback handle it
           }
         } catch (error) {
           console.error("PDF.ai API error:", error);
-          // Fall through to OpenAI with Pinecone context
+          // Log detailed error but continue - fall through to OpenAI with Pinecone context
+          if (error instanceof Error) {
+            console.error("PDF.ai error details:", error.message, error.stack);
+          }
+          // Don't throw - let the fallback handle it
         }
       }
     }
@@ -363,13 +374,19 @@ export async function POST(req: Request) {
       }
     } else if (pdfDocIds.length > 0) {
       // Even if no Pinecone chunks, mention PDFs are referenced
-      const allUserPdfs = await db.query.pdfDocuments.findMany({
-        where: eq(pdfDocuments.userId, user.id),
-      });
-      const referencedPdfs = allUserPdfs.filter(pdf => pdfDocIds.includes(pdf.id));
-      
-      if (referencedPdfs.length > 0 && !systemContext) {
-        systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible.`;
+      try {
+        const allUserPdfs = await db.query.pdfDocuments.findMany({
+          where: eq(pdfDocuments.userId, user.id),
+        });
+        const referencedPdfs = allUserPdfs.filter(pdf => pdfDocIds.includes(pdf.id));
+        
+        if (referencedPdfs.length > 0 && !systemContext) {
+          console.log(`PDFs referenced but no Pinecone context found. PDFs: ${referencedPdfs.map(p => p.fileName).join(", ")}`);
+          systemContext = `The user has referenced PDF document(s): ${referencedPdfs.map(p => p.fileName).join(", ")}. The PDF content may not be fully indexed yet. Please acknowledge that you're aware of the PDF and try to help based on general knowledge if possible. If the question is specifically about the PDF content, suggest that the user wait a moment for indexing to complete or try re-uploading the PDF.`;
+        }
+      } catch (dbError) {
+        console.error("Error fetching PDF documents for context:", dbError);
+        // Continue without PDF context - don't fail the request
       }
     }
 
@@ -416,6 +433,21 @@ export async function POST(req: Request) {
         ]
       : formattedMessages;
 
+    // Validate that we have messages to send
+    if (messagesWithContext.length === 0) {
+      console.error("No messages to send to OpenAI");
+      return new Response(
+        JSON.stringify({ 
+          error: "Invalid request",
+          message: "No messages provided"
+        }),
+        {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
     console.log(`Sending to OpenAI. Has PDF context: ${!!systemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}, Messages: ${messagesWithContext.length}`);
 
     try {
@@ -430,11 +462,19 @@ export async function POST(req: Request) {
       const errorMessage = openaiError?.message || "Failed to connect to OpenAI API";
       const errorStatus = openaiError?.status || 500;
       
+      // Log full error details for debugging
+      console.error("OpenAI error details:", {
+        message: errorMessage,
+        status: errorStatus,
+        error: openaiError?.error,
+        stack: openaiError?.stack,
+      });
+      
       return new Response(
         JSON.stringify({ 
           error: "OpenAI API error",
           message: errorMessage,
-          details: openaiError?.error || null
+          details: process.env.NODE_ENV === "development" ? (openaiError?.error || null) : undefined
         }),
         {
           status: errorStatus,
@@ -463,6 +503,7 @@ export async function POST(req: Request) {
           for await (const chunk of stream) {
             // Handle potential errors in chunk processing
             if (chunk.error) {
+              console.error("OpenAI stream error:", chunk.error);
               throw new Error(chunk.error.message || "OpenAI API error in stream");
             }
 
@@ -471,6 +512,12 @@ export async function POST(req: Request) {
               accumulatedContent += content;
               controller.enqueue(encoder.encode(content));
             }
+          }
+
+          // Check if we got any content
+          if (accumulatedContent.trim().length === 0) {
+            console.warn("OpenAI stream completed but no content was received");
+            // Still try to save an empty message or handle gracefully
           }
 
           // Save assistant message only if we have content
@@ -514,13 +561,21 @@ export async function POST(req: Request) {
         } catch (error) {
           console.error("Error in stream processing:", error);
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          console.error("Stream error details:", {
+            message: errorMessage,
+            stack: error instanceof Error ? error.stack : undefined,
+            accumulatedContent: accumulatedContent.substring(0, 100),
+          });
+          
+          // Send error as JSON instead of text in stream
+          // Close the stream and let the outer catch handle it
           try {
-            controller.enqueue(encoder.encode(`\n\n[Error: ${errorMessage}]`));
-            controller.close();
-          } catch (closeError) {
-            // If we can't send error message, just close
             controller.error(error);
+          } catch (closeError) {
+            console.error("Error closing stream:", closeError);
           }
+          // Re-throw to be caught by outer try-catch
+          throw error;
         }
       },
     });
@@ -535,8 +590,21 @@ export async function POST(req: Request) {
     });
   } catch (error) {
     console.error("API error:", error);
+    const errorMessage = error instanceof Error ? error.message : "Unknown error";
+    const errorDetails = error instanceof Error ? error.stack : String(error);
+    
+    console.error("Full error details:", {
+      message: errorMessage,
+      details: errorDetails,
+      name: error instanceof Error ? error.name : undefined,
+    });
+    
     return new Response(
-      JSON.stringify({ error: "Failed to process request" }),
+      JSON.stringify({ 
+        error: "Failed to process request",
+        message: errorMessage,
+        details: process.env.NODE_ENV === "development" ? errorDetails : undefined
+      }),
       {
         status: 500,
         headers: { "Content-Type": "application/json" },
