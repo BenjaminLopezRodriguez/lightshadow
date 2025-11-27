@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { Send, ChevronDown, Sparkles, Bot, User, Paperclip, FileText, X, Brain } from "lucide-react";
+import { useState, useRef, useEffect, useCallback } from "react";
+import { Send, Sparkles, Bot, User, Paperclip, FileText, X, Brain, Reply, AtSign } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
@@ -14,15 +14,24 @@ import { MarkdownContent } from "./markdown-content";
 import { GroupChatManager } from "./group-chat-manager";
 
 interface Message {
+  id?: number;
   role: "user" | "assistant";
   content: string;
   thoughts?: Array<{ id: number; thought: string; timestamp: number }>;
+  replyToMessageId?: number | null;
+  mentions?: string[];
 }
 
 interface ThoughtStage {
   id: number;
   thought: string;
   timestamp: number;
+}
+
+interface ReplyPreview {
+  id: number;
+  content: string;
+  role: "user" | "assistant";
 }
 
 export function Chat() {
@@ -34,6 +43,12 @@ export function Chat() {
   const [attachedFile, setAttachedFile] = useState<{ url: string; name: string; pdfDocumentId?: number } | null>(null);
   const [chatPdfRefs, setChatPdfRefs] = useState<Array<{ id: number; fileName: string }>>([]);
   const [chainOfThought, setChainOfThought] = useState(false);
+  const [replyTo, setReplyTo] = useState<ReplyPreview | null>(null);
+  const [mentionQuery, setMentionQuery] = useState("");
+  const [showMentions, setShowMentions] = useState(false);
+  const [mentionPosition, setMentionPosition] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const mentionListRef = useRef<HTMLDivElement>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const abortControllerRef = useRef<AbortController | null>(null);
@@ -41,13 +56,18 @@ export function Chat() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const chatId = searchParams.get("chatId");
-  const { isAuthenticated } = useKindeBrowserClient();
+  const { isAuthenticated, user } = useKindeBrowserClient();
 
   const utils = api.useUtils();
   const { data: chatHistory, isLoading: isLoadingHistory } = api.chat.getById.useQuery(
     { id: parseInt(chatId || "0") },
     { enabled: !!chatId }
   );
+
+  const { data: contacts } = api.contact.getAll.useQuery(undefined, {
+    enabled: (isAuthenticated ?? false) && !!chatId,
+  });
+
 
   const { data: pdfDocuments } = api.pdf.getAll.useQuery(undefined, {
     enabled: (isAuthenticated ?? false),
@@ -58,6 +78,48 @@ export function Chat() {
     { enabled: (!!chatId && (isAuthenticated ?? false)) }
   );
 
+  // Get users available for mentions (contacts + group chat participants)
+  const mentionableUsers = (() => {
+    const users: Array<{ userId: string; username: string; uniqueId: string }> = [];
+    
+    if (contacts) {
+      contacts.forEach(contact => {
+        if (contact.profile) {
+          users.push({
+            userId: contact.contactId,
+            username: contact.profile.username,
+            uniqueId: contact.profile.uniqueId,
+          });
+        }
+      });
+    }
+
+    if (chatHistory?.isGroupChat && chatHistory.participants) {
+      chatHistory.participants.forEach(participant => {
+        if (participant.userId !== user?.id && !users.find(u => u.userId === participant.userId)) {
+          // We'd need to fetch profiles for participants, but for now we'll use contacts
+          const contact = contacts?.find(c => c.contactId === participant.userId);
+          if (contact?.profile) {
+            users.push({
+              userId: participant.userId,
+              username: contact.profile.username,
+              uniqueId: contact.profile.uniqueId,
+            });
+          }
+        }
+      });
+    }
+
+    return users;
+  })();
+
+  const filteredMentions = mentionQuery
+    ? mentionableUsers.filter(u => 
+        u.username.toLowerCase().includes(mentionQuery.toLowerCase()) ||
+        u.uniqueId.toLowerCase().includes(mentionQuery.toLowerCase())
+      )
+    : mentionableUsers;
+
   useEffect(() => {
     if (chatPdfs) {
       setChatPdfRefs(chatPdfs.map(pdf => ({ id: pdf.id, fileName: pdf.fileName })));
@@ -66,7 +128,13 @@ export function Chat() {
 
   useEffect(() => {
     if (chatHistory) {
-      setMessages(chatHistory.messages.map(m => ({ role: m.role as "user" | "assistant", content: m.content })));
+      setMessages(chatHistory.messages.map(m => ({ 
+        id: m.id,
+        role: m.role as "user" | "assistant", 
+        content: m.content,
+        replyToMessageId: (m as any).replyToMessageId,
+        mentions: (m as any).mentions || [],
+      })));
     } else if (!chatId) {
       setMessages([]);
     }
@@ -80,6 +148,57 @@ export function Chat() {
     scrollToBottom();
   }, [messages, streamingContent]);
 
+  // Handle mention input
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value;
+    setInput(value);
+
+    const cursorPos = e.target.selectionStart || 0;
+    const textBeforeCursor = value.substring(0, cursorPos);
+    const lastAtIndex = textBeforeCursor.lastIndexOf("@");
+
+    if (lastAtIndex !== -1) {
+      const textAfterAt = textBeforeCursor.substring(lastAtIndex + 1);
+      if (!textAfterAt.includes(" ") && !textAfterAt.includes("\n")) {
+        setMentionQuery(textAfterAt);
+        setMentionPosition(lastAtIndex);
+        setShowMentions(true);
+        return;
+      }
+    }
+
+    setShowMentions(false);
+    setMentionQuery("");
+  };
+
+  const insertMention = (username: string, uniqueId: string) => {
+    const beforeMention = input.substring(0, mentionPosition);
+    const afterMention = input.substring(inputRef.current?.selectionStart || input.length);
+    const newInput = `${beforeMention}@${username}${afterMention}`;
+    setInput(newInput);
+    setShowMentions(false);
+    setMentionQuery("");
+    
+    setTimeout(() => {
+      const newCursorPos = mentionPosition + username.length + 1;
+      inputRef.current?.setSelectionRange(newCursorPos, newCursorPos);
+      inputRef.current?.focus();
+    }, 0);
+  };
+
+  // Parse mentions from content
+  const parseMentions = (content: string): string[] => {
+    const mentionRegex = /@(\w+)/g;
+    const matches = content.match(mentionRegex);
+    if (!matches) return [];
+    
+    return matches.map(match => {
+      const username = match.substring(1);
+      const user = mentionableUsers.find(u => u.username === username || u.uniqueId === username);
+      return user?.userId || "";
+    }).filter(Boolean);
+  };
+
   // Parse chain of thought reasoning from content
   const parseChainOfThought = (content: string): { thoughts: ThoughtStage[]; cleanContent: string } => {
     if (!chainOfThought) {
@@ -89,8 +208,6 @@ export function Chat() {
     const thoughts: ThoughtStage[] = [];
     let cleanContent = content;
     
-    // Extract thoughts marked with 🧠thinking: (supports multi-line)
-    // Match pattern: 🧠thinking: [content until next 🧠thinking: or end of reasoning section]
     const explicitThoughtPattern = /🧠\s*thinking\s*:\s*([\s\S]*?)(?=🧠\s*thinking\s*:|$)/gi;
     let match;
     let thoughtId = 0;
@@ -106,13 +223,10 @@ export function Chat() {
       }
     }
 
-    // Remove all thought markers from content
     if (thoughts.length > 0) {
-      // Remove all 🧠thinking: markers and their content
       cleanContent = content.replace(/🧠\s*thinking\s*:\s*[\s\S]*?(?=🧠\s*thinking\s*:|$)/gi, "").trim();
     }
 
-    // Also look for reasoning phrases when chain of thought is enabled but no explicit markers found
     if (thoughts.length === 0 && chainOfThought) {
       const reasoningPattern = /(Let me think through this[^\.]+\.|First, I need to consider[^\.]+\.|Based on this analysis[^\.]+\.)/gi;
       let reasoningMatch;
@@ -128,7 +242,6 @@ export function Chat() {
       }
     }
 
-    // Clean up extra whitespace and empty lines
     cleanContent = cleanContent
       .replace(/\n{3,}/g, "\n\n")
       .replace(/^\s+|\s+$/g, "")
@@ -147,15 +260,22 @@ export function Chat() {
       return;
     }
 
-    const userMessage: Message = { role: "user", content: contentToSubmit.trim() };
+    const mentions = parseMentions(contentToSubmit);
+    const userMessage: Message = { 
+      role: "user", 
+      content: contentToSubmit.trim(),
+      replyToMessageId: replyTo?.id || null,
+      mentions: mentions.length > 0 ? mentions : undefined,
+    };
     const newMessages = [...messages, userMessage];
     setMessages(newMessages);
     setInput("");
+    setReplyTo(null);
     setIsLoading(true);
     setStreamingContent("");
     setStreamingThoughts([]);
+    setShowMentions(false);
 
-    // Cancel any existing request
     if (abortControllerRef.current) {
       abortControllerRef.current.abort();
     }
@@ -177,11 +297,12 @@ export function Chat() {
           fileUrl: attachedFile?.url,
           pdfDocumentId: attachedFile?.pdfDocumentId,
           chainOfThought: chainOfThought,
+          replyToMessageId: replyTo?.id,
+          mentions: mentions.length > 0 ? mentions : undefined,
         }),
         signal: abortControllerRef.current.signal,
       });
 
-      // Check if response is JSON error
       const contentType = response.headers.get("content-type");
       if (contentType?.includes("application/json")) {
         const errorData = await response.json();
@@ -189,12 +310,10 @@ export function Chat() {
       }
 
       if (!response.ok) {
-        // Try to get error message from response
         try {
           const errorData = await response.json();
           throw new Error(errorData.message || errorData.error || `Server error: ${response.status}`);
         } catch (e) {
-          // If not JSON, use status text
           throw new Error(`Failed to get response: ${response.status} ${response.statusText}`);
         }
       }
@@ -205,7 +324,6 @@ export function Chat() {
         utils.chat.getAll.invalidate();
         utils.pdf.getByChatId.invalidate({ chatId: parseInt(newChatId) });
       } else if (chatId) {
-        // Invalidate PDF references for this chat
         utils.pdf.getByChatId.invalidate({ chatId: parseInt(chatId) });
       }
 
@@ -223,7 +341,6 @@ export function Chat() {
             accumulatedContent += chunk;
             setStreamingContent(accumulatedContent);
             
-            // Parse chain of thought reasoning in real-time
             if (chainOfThought) {
               const parsed = parseChainOfThought(accumulatedContent);
               setStreamingThoughts(parsed.thoughts);
@@ -231,17 +348,14 @@ export function Chat() {
           }
         } catch (streamError) {
           console.error("Error reading stream:", streamError);
-          // If we have some content, use it; otherwise throw error
           if (accumulatedContent.trim().length === 0) {
             throw streamError;
           }
         }
       }
 
-      // Parse final content for chain of thought
       const parsed = parseChainOfThought(accumulatedContent);
       
-      // Add completed message to messages array
       setMessages([...newMessages, { 
         role: "assistant", 
         content: parsed.cleanContent,
@@ -249,8 +363,6 @@ export function Chat() {
       }]);
       setStreamingContent("");
       setStreamingThoughts([]);
-      // Don't clear attached file - keep it so PDF context persists in the chat
-      // setAttachedFile(null); // Clear attached file after sending
     } catch (error: any) {
       if (error.name === "AbortError") {
         console.log("Request aborted");
@@ -270,13 +382,23 @@ export function Chat() {
     }
   };
 
-  // Get thoughts for streaming or completed messages
   const getThoughtsForMessage = (index: number): ThoughtStage[] => {
     if (index === displayMessages.length - 1 && streamingContent && isLoading) {
       return streamingThoughts;
     }
     const message = messages[index];
     return message?.thoughts || [];
+  };
+
+  const getReplyPreview = (messageId: number | null | undefined): ReplyPreview | null => {
+    if (!messageId) return null;
+    const message = messages.find(m => m.id === messageId);
+    if (!message) return null;
+    return {
+      id: message.id!,
+      content: message.content.substring(0, 100) + (message.content.length > 100 ? "..." : ""),
+      role: message.role,
+    };
   };
 
   const displayMessages = [
@@ -295,11 +417,28 @@ export function Chat() {
   const themeColor = chatHistory?.themeColor;
   const groupName = chatHistory?.groupName;
 
+  // Render message content with mentions highlighted
+  const renderMessageContent = (content: string, mentions?: string[]) => {
+    if (!mentions || mentions.length === 0) {
+      return content;
+    }
+
+    let rendered = content;
+    mentionableUsers.forEach(user => {
+      if (mentions.includes(user.userId)) {
+        const regex = new RegExp(`@${user.username.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, "g");
+        rendered = rendered.replace(regex, `<span class="text-primary font-medium">@${user.username}</span>`);
+      }
+    });
+
+    return rendered;
+  };
+
   return (
     <div className="flex-1 flex flex-col h-full relative">
       {/* Group Chat Header */}
       {chatId && (
-        <div className="border-b border-white/5 px-4 py-3 flex items-center justify-between bg-black/20">
+        <div className="border-b border-border bg-card/50 backdrop-blur-sm px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {isGroupChat && groupName && (
               <div className="flex items-center gap-2">
@@ -307,7 +446,7 @@ export function Chat() {
                   className="w-2 h-2 rounded-full"
                   style={{ backgroundColor: themeColor || "#6366f1" }}
                 />
-                <h2 className="text-sm font-medium text-white">{groupName}</h2>
+                <h2 className="text-sm font-medium text-foreground">{groupName}</h2>
               </div>
             )}
           </div>
@@ -327,63 +466,75 @@ export function Chat() {
 
       {/* Messages Area */}
       <div
-        className="flex-1 overflow-y-auto p-4 md:p-8 space-y-8 pb-40"
+        className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 pb-40"
         style={
           isGroupChat && themeColor
             ? {
-                  borderLeft: `4px solid ${themeColor}`,
-                  paddingLeft: "calc(1rem + 4px)",
+                  borderLeft: `3px solid ${themeColor}`,
+                  paddingLeft: "calc(1rem + 3px)",
                 }
             : undefined
         }
       >
         {displayMessages.length === 0 ? (
-          <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-8 text-center px-4">
-            <div className="space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto shadow-xl shadow-indigo-500/20">
-                <Sparkles className="w-8 h-8 text-white" />
+          <div className="flex flex-col items-center justify-center min-h-[60vh] space-y-6 text-center px-4">
+            <div className="space-y-3">
+              <div className="w-14 h-14 rounded-xl bg-primary flex items-center justify-center mx-auto shadow-lg">
+                <Sparkles className="w-7 h-7 text-primary-foreground" />
               </div>
-              <h2 className="text-4xl font-serif text-white tracking-tight">How can I help you today?</h2>
+              <h2 className="text-3xl font-serif text-foreground tracking-tight">How can I help you today?</h2>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-2xl">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">
               {suggestedPrompts.map((item, index) => (
                 <button
                   key={index}
                   onClick={() => handleSubmit(undefined, item.prompt)}
-                  className="text-left p-4 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-200 group"
+                  className="text-left p-4 rounded-lg bg-card border border-border hover:bg-accent transition-colors group"
                 >
-                  <h3 className="font-medium text-white mb-1 group-hover:text-indigo-300 transition-colors">{item.title}</h3>
-                  <p className="text-sm text-white/60 line-clamp-2">{item.prompt}</p>
+                  <h3 className="font-medium text-foreground mb-1 group-hover:text-primary transition-colors">{item.title}</h3>
+                  <p className="text-sm text-muted-foreground line-clamp-2">{item.prompt}</p>
                 </button>
               ))}
             </div>
           </div>
         ) : (
-          <div className="w-full max-w-3xl mx-auto space-y-8">
+          <div className="w-full max-w-3xl mx-auto space-y-6">
             {displayMessages.map((message, index) => {
               const thoughts = getThoughtsForMessage(index);
               const isStreaming = index === displayMessages.length - 1 && streamingContent && isLoading;
               const parsedContent = chainOfThought && message.role === "assistant" 
                 ? parseChainOfThought(message.content).cleanContent 
                 : message.content;
+              const replyPreview = getReplyPreview(message.replyToMessageId);
 
               return (
-                <div key={index} className="w-full">
+                <div key={index} className="w-full group">
                   <div
-                    className={`flex gap-4 ${message.role === "user" ? "justify-end" : "justify-start"
-                      }`}
+                    className={cn(
+                      "flex gap-3",
+                      message.role === "user" ? "justify-end" : "justify-start"
+                    )}
                   >
                     {message.role === "assistant" && (
-                      <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center flex-shrink-0 mt-1 shadow-lg shadow-indigo-500/20">
-                        <Bot className="w-5 h-5 text-white" />
+                      <div className="w-8 h-8 rounded-lg bg-primary flex items-center justify-center flex-shrink-0 mt-1 shadow-sm">
+                        <Bot className="w-4 h-4 text-primary-foreground" />
                       </div>
                     )}
 
-                    <div className="flex-1 max-w-[85%] flex flex-col gap-2">
-                      {/* Chain of Thought Component */}
+                    <div className="flex-1 max-w-[85%] flex flex-col gap-1.5">
+                      {/* Reply Preview */}
+                      {replyPreview && (
+                        <div className="text-xs text-muted-foreground flex items-center gap-1.5 mb-1 px-3 py-1.5 bg-muted/50 rounded-md border-l-2 border-primary">
+                          <Reply className="w-3 h-3" />
+                          <span className="font-medium">{replyPreview.role === "user" ? "You" : "Assistant"}</span>
+                          <span className="truncate">{replyPreview.content}</span>
+                        </div>
+                      )}
+
+                      {/* Chain of Thought */}
                       {message.role === "assistant" && (thoughts.length > 0 || (isStreaming && chainOfThought)) && (
-                        <div className="mb-2">
+                        <div className="mb-1">
                           <ChainOfThought 
                             thoughts={thoughts} 
                             isStreaming={isStreaming && chainOfThought}
@@ -393,30 +544,52 @@ export function Chat() {
 
                       <div
                         className={cn(
-                          "rounded-2xl px-6 py-4 shadow-sm",
+                          "rounded-lg px-4 py-3 shadow-sm relative",
                           message.role === "user"
-                            ? "bg-white text-black ml-12"
-                            : "bg-transparent text-white/90 border border-white/5"
+                            ? "bg-primary text-primary-foreground"
+                            : "bg-card border border-border"
                         )}
                       >
                         {message.role === "assistant" ? (
-                          <div className="text-base">
+                          <div className="text-sm">
                             <MarkdownContent content={parsedContent} />
                             {isStreaming && (
-                              <span className="inline-block w-1.5 h-4 ml-1 bg-current animate-pulse" />
+                              <span className="inline-block w-1 h-4 ml-1 bg-current animate-pulse" />
                             )}
                           </div>
                         ) : (
-                          <p className="text-base leading-relaxed whitespace-pre-wrap break-words">
-                            {parsedContent}
+                          <p className="text-sm leading-relaxed whitespace-pre-wrap break-words">
+                            {message.mentions && message.mentions.length > 0 ? (
+                              <span dangerouslySetInnerHTML={{ __html: renderMessageContent(parsedContent, message.mentions) }} />
+                            ) : (
+                              parsedContent
+                            )}
                           </p>
                         )}
                       </div>
+
+                      {/* Reply button */}
+                      {message.role === "assistant" && (
+                        <button
+                          onClick={() => {
+                            setReplyTo({
+                              id: message.id || index,
+                              content: message.content.substring(0, 100),
+                              role: message.role,
+                            });
+                            inputRef.current?.focus();
+                          }}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 w-fit px-2 py-1 rounded hover:bg-muted"
+                        >
+                          <Reply className="w-3 h-3" />
+                          Reply
+                        </button>
+                      )}
                     </div>
 
                     {message.role === "user" && (
-                      <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center flex-shrink-0 mt-1">
-                        <User className="w-5 h-5 text-white" />
+                      <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 mt-1">
+                        <User className="w-4 h-4 text-muted-foreground" />
                       </div>
                     )}
                   </div>
@@ -429,48 +602,82 @@ export function Chat() {
       </div>
 
       {/* Input Area */}
-      <div className="absolute bottom-0 left-0 right-0 p-6 bg-gradient-to-t from-black/80 via-black/40 to-transparent">
-        <div className="w-full max-w-3xl mx-auto space-y-4">
-          {/* Show PDF references for this chat */}
+      <div className="absolute bottom-0 left-0 right-0 p-4 bg-background/95 backdrop-blur-sm border-t border-border">
+        <div className="w-full max-w-3xl mx-auto space-y-3">
+          {/* Reply Preview */}
+          {replyTo && (
+            <div className="flex items-center justify-between px-3 py-2 bg-muted rounded-lg text-sm">
+              <div className="flex items-center gap-2 text-muted-foreground">
+                <Reply className="w-3 h-3" />
+                <span>Replying to:</span>
+                <span className="font-medium text-foreground">{replyTo.content}</span>
+              </div>
+              <button
+                onClick={() => setReplyTo(null)}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          )}
+
+          {/* PDF references */}
           {chatPdfRefs.length > 0 && (
             <div className="flex flex-wrap gap-2">
               {chatPdfRefs.map((pdf) => (
                 <div
                   key={pdf.id}
-                  className="flex items-center gap-2 px-3 py-1.5 bg-indigo-500/20 border border-indigo-500/30 rounded-lg"
+                  className="flex items-center gap-2 px-2 py-1 bg-primary/10 border border-primary/20 rounded-md"
                 >
-                  <FileText className="w-3 h-3 text-indigo-300" />
-                  <span className="text-xs text-indigo-200">{pdf.fileName}</span>
+                  <FileText className="w-3 h-3 text-primary" />
+                  <span className="text-xs text-primary">{pdf.fileName}</span>
                 </div>
               ))}
             </div>
           )}
 
           {attachedFile && (
-            <div className="flex items-center gap-2 p-2 bg-white/10 rounded-lg w-fit">
-              <FileText className="w-4 h-4 text-white" />
-              <span className="text-sm text-white">{attachedFile.name}</span>
-              <button onClick={() => setAttachedFile(null)} className="text-white/60 hover:text-white">
+            <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg w-fit">
+              <FileText className="w-4 h-4 text-foreground" />
+              <span className="text-sm text-foreground">{attachedFile.name}</span>
+              <button onClick={() => setAttachedFile(null)} className="text-muted-foreground hover:text-foreground">
                 <X className="w-4 h-4" />
               </button>
             </div>
           )}
 
-          <form onSubmit={(e) => handleSubmit(e)} className="relative group">
-            <div className="absolute inset-0 bg-gradient-to-r from-indigo-500/20 to-purple-500/20 rounded-2xl blur-xl opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
-            <div className="relative flex items-center bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl shadow-black/50 overflow-hidden ring-1 ring-white/5 focus-within:ring-white/20 transition-all">
+          {/* Mention dropdown */}
+          {showMentions && filteredMentions.length > 0 && (
+            <div
+              ref={mentionListRef}
+              className="absolute bottom-full left-4 right-4 mb-2 max-h-48 overflow-y-auto bg-popover border border-border rounded-lg shadow-lg z-50"
+            >
+              {filteredMentions.map((user) => (
+                <button
+                  key={user.userId}
+                  onClick={() => insertMention(user.username, user.uniqueId)}
+                  className="w-full text-left px-4 py-2 hover:bg-accent flex items-center gap-2 text-sm"
+                >
+                  <AtSign className="w-4 h-4 text-muted-foreground" />
+                  <div>
+                    <div className="font-medium text-foreground">{user.username}</div>
+                    <div className="text-xs text-muted-foreground">{user.uniqueId}</div>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+
+          <form onSubmit={(e) => handleSubmit(e)} className="relative">
+            <div className="flex items-center bg-card border border-border rounded-lg shadow-sm overflow-hidden focus-within:ring-2 focus-within:ring-ring focus-within:border-ring transition-all">
               <div className="pl-2">
                 <UploadButton
                   endpoint="pdfUploader"
                   onClientUploadComplete={(res) => {
                     if (res && res[0]) {
-                      // UploadThing wraps the return value from onUploadComplete
                       const file = res[0];
-                      // The pdfDocumentId might be in the serverData or directly accessible
                       const serverData = (file as any).serverData || {};
                       const pdfDocumentId = serverData.pdfDocumentId || (file as any).pdfDocumentId;
-                      
-                      console.log("PDF upload complete:", { file, pdfDocumentId });
                       
                       setAttachedFile({
                         url: file.url,
@@ -478,7 +685,6 @@ export function Chat() {
                         pdfDocumentId: pdfDocumentId,
                       });
                       
-                      // Invalidate PDF queries to refresh the list
                       utils.pdf.getAll.invalidate();
                     }
                   }}
@@ -486,7 +692,7 @@ export function Chat() {
                     alert(`ERROR! ${error.message}`);
                   }}
                   appearance={{
-                    button: "bg-transparent text-white/40 hover:text-white w-10 h-10 rounded-xl p-0",
+                    button: "bg-transparent text-muted-foreground hover:text-foreground w-9 h-9 rounded-md p-0",
                     allowedContent: "hidden",
                   }}
                   content={{
@@ -495,18 +701,29 @@ export function Chat() {
                 />
               </div>
               <input
+                ref={inputRef}
                 type="text"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
-                placeholder={attachedFile ? "Ask a question about this PDF..." : "Message Lumi..."}
+                onChange={handleInputChange}
+                onKeyDown={(e) => {
+                  if (showMentions && e.key === "Escape") {
+                    setShowMentions(false);
+                  }
+                  if (showMentions && e.key === "ArrowDown") {
+                    e.preventDefault();
+                    mentionListRef.current?.querySelector("button")?.focus();
+                  }
+                }}
+                placeholder={attachedFile ? "Ask a question about this PDF..." : "Message..."}
                 disabled={isLoading}
-                className="flex-1 bg-transparent border-none px-4 py-4 text-white placeholder:text-white/40 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
+                className="flex-1 bg-transparent border-none px-3 py-3 text-foreground placeholder:text-muted-foreground focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed"
               />
               <div className="pr-2">
                 <Button
                   type="submit"
                   size="icon"
-                  className="w-10 h-10 rounded-xl bg-white text-black hover:bg-white/90 disabled:bg-white/20 disabled:text-white/40 transition-all"
+                  className="w-9 h-9 rounded-md bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-all"
+                  disabled={isLoading || !input.trim()}
                 >
                   <Send className="w-4 h-4" />
                 </Button>
@@ -514,19 +731,15 @@ export function Chat() {
             </div>
           </form>
 
-          {/* Model Selector and Chain of Thought Toggle */}
-          <div className="flex justify-center items-center gap-4">
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs font-medium text-white/40 hover:bg-white/10 hover:text-white/60 transition-colors cursor-pointer">
-              <span>Lumi 1.0 (GPT-4o)</span>
-              <ChevronDown className="w-3 h-3" />
-            </div>
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-white/5 border border-white/5 text-xs font-medium text-white/60">
+          {/* Chain of Thought Toggle */}
+          <div className="flex justify-center items-center">
+            <div className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted border border-border text-xs font-medium">
               <Brain className="w-3 h-3" />
               <span>Chain of Thought</span>
               <Switch
                 checked={chainOfThought}
                 onCheckedChange={setChainOfThought}
-                className="data-[state=checked]:bg-indigo-500"
+                className="data-[state=checked]:bg-primary"
               />
             </div>
           </div>
@@ -535,4 +748,3 @@ export function Chat() {
     </div>
   );
 }
-
