@@ -187,7 +187,7 @@ export async function POST(req: Request) {
       });
     }
 
-    let stream;
+    let stream: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | null = null;
     let systemContext = "";
 
     // Query Pinecone for PDF context as fallback (only if PDF.ai is not available)
@@ -225,10 +225,11 @@ export async function POST(req: Request) {
       }
     }
 
-    // Check for cached response (only if we have context or no PDFs)
+    // Check for cached response (only if we don't have fresh PDF context)
+    // Skip cache if we have Pinecone context to ensure fresh answers
     let cachedResponse: string | null = null;
-    if (pdfDocIds.length > 0 && systemContext) {
-      // Don't use cache if we have fresh PDF context
+    if (pdfDocIds.length > 0 && pineconeContext) {
+      // Don't use cache if we have fresh PDF context from Pinecone
       cachedResponse = null;
     } else {
       try {
@@ -402,20 +403,56 @@ export async function POST(req: Request) {
     }
 
     // Build messages with system context if PDFs are referenced
+    // Ensure messages are in the correct format for OpenAI API
+    const formattedMessages = messages.map((msg: any) => ({
+      role: msg.role === "assistant" ? "assistant" : msg.role === "system" ? "system" : "user",
+      content: typeof msg.content === "string" ? msg.content : String(msg.content || ""),
+    }));
+
     const messagesWithContext = systemContext
       ? [
           { role: "system" as const, content: systemContext },
-          ...messages,
+          ...formattedMessages,
         ]
-      : messages;
+      : formattedMessages;
 
-    console.log(`Sending to OpenAI. Has PDF context: ${!!systemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}`);
+    console.log(`Sending to OpenAI. Has PDF context: ${!!systemContext}, PDF IDs: ${pdfDocIds.join(", ") || "none"}, Messages: ${messagesWithContext.length}`);
 
-    stream = await openai.chat.completions.create({
-      model: "gpt-4o-mini",
-      messages: messagesWithContext,
-      stream: true,
-    });
+    try {
+      stream = await openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: messagesWithContext,
+        stream: true,
+      });
+    } catch (openaiError: any) {
+      console.error("OpenAI API error:", openaiError);
+      // Provide more detailed error information
+      const errorMessage = openaiError?.message || "Failed to connect to OpenAI API";
+      const errorStatus = openaiError?.status || 500;
+      
+      return new Response(
+        JSON.stringify({ 
+          error: "OpenAI API error",
+          message: errorMessage,
+          details: openaiError?.error || null
+        }),
+        {
+          status: errorStatus,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    // Ensure stream is defined
+    if (!stream) {
+      return new Response(
+        JSON.stringify({ error: "Failed to create OpenAI stream" }),
+        {
+          status: 500,
+          headers: { "Content-Type": "application/json" },
+        }
+      );
+    }
 
     const encoder = new TextEncoder();
     let accumulatedContent = "";
@@ -424,6 +461,11 @@ export async function POST(req: Request) {
       async start(controller) {
         try {
           for await (const chunk of stream) {
+            // Handle potential errors in chunk processing
+            if (chunk.error) {
+              throw new Error(chunk.error.message || "OpenAI API error in stream");
+            }
+
             const content = chunk.choices[0]?.delta?.content || "";
             if (content) {
               accumulatedContent += content;
@@ -431,34 +473,54 @@ export async function POST(req: Request) {
             }
           }
 
-          // Save assistant message
-          if (currentChatId) {
-            await db.insert(messagesTable).values({
-              chatId: currentChatId,
-              role: "assistant",
-              content: accumulatedContent,
-            });
+          // Save assistant message only if we have content
+          if (currentChatId && accumulatedContent.trim().length > 0) {
+            try {
+              await db.insert(messagesTable).values({
+                chatId: currentChatId,
+                role: "assistant",
+                content: accumulatedContent,
+              });
+            } catch (dbError) {
+              console.error("Error saving assistant message to database:", dbError);
+              // Don't fail the request if DB save fails
+            }
           }
 
-          // Cache the response in Pinecone
-          if (pdfDocIds.length > 0) {
-            await cacheChatResponse(
-              lastMessage.content,
-              accumulatedContent,
-              user.id,
-              pdfDocIds
-            );
-          } else {
-            await cacheChatResponse(
-              lastMessage.content,
-              accumulatedContent,
-              user.id
-            );
+          // Cache the response in Pinecone (only if we have content)
+          if (accumulatedContent.trim().length > 0) {
+            try {
+              if (pdfDocIds.length > 0) {
+                await cacheChatResponse(
+                  lastMessage.content,
+                  accumulatedContent,
+                  user.id,
+                  pdfDocIds
+                );
+              } else {
+                await cacheChatResponse(
+                  lastMessage.content,
+                  accumulatedContent,
+                  user.id
+                );
+              }
+            } catch (cacheError) {
+              console.error("Error caching response:", cacheError);
+              // Don't fail the request if caching fails
+            }
           }
 
           controller.close();
         } catch (error) {
-          controller.error(error);
+          console.error("Error in stream processing:", error);
+          const errorMessage = error instanceof Error ? error.message : "Unknown error";
+          try {
+            controller.enqueue(encoder.encode(`\n\n[Error: ${errorMessage}]`));
+            controller.close();
+          } catch (closeError) {
+            // If we can't send error message, just close
+            controller.error(error);
+          }
         }
       },
     });
