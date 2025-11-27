@@ -25,12 +25,55 @@ export const posts = createTable(
   (t) => [index("name_idx").on(t.name)],
 );
 
+export const userProfiles = createTable(
+  "user_profile",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    userId: d.varchar({ length: 256 }).notNull().unique(),
+    username: d.varchar({ length: 100 }).notNull().unique(),
+    avatarUrl: d.varchar({ length: 1024 }),
+    phoneNumber: d.varchar({ length: 20 }),
+    uniqueId: d.varchar({ length: 50 }).notNull().unique(),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+    updatedAt: d.timestamp({ withTimezone: true }).$onUpdate(() => new Date()),
+  }),
+  (t) => [
+    index("user_profile_user_idx").on(t.userId),
+    index("user_profile_username_idx").on(t.username),
+    index("user_profile_unique_id_idx").on(t.uniqueId),
+  ],
+);
+
+export const contacts = createTable(
+  "contact",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    userId: d.varchar({ length: 256 }).notNull(),
+    contactId: d.varchar({ length: 256 }).notNull(),
+    createdAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  }),
+  (t) => [
+    index("contact_user_idx").on(t.userId),
+    index("contact_contact_idx").on(t.contactId),
+    index("contact_pair_idx").on(t.userId, t.contactId),
+  ],
+);
+
 export const chats = createTable(
   "chat",
   (d) => ({
     id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
-    userId: d.varchar({ length: 256 }).notNull(),
+    userId: d.varchar({ length: 256 }).notNull(), // creator/owner
     name: d.varchar({ length: 256 }).notNull(),
+    isGroupChat: d.boolean().notNull().default(false),
+    groupName: d.varchar({ length: 256 }),
+    themeColor: d.varchar({ length: 50 }), // hex color code
     createdAt: d
       .timestamp({ withTimezone: true })
       .$defaultFn(() => /* @__PURE__ */ new Date())
@@ -38,6 +81,27 @@ export const chats = createTable(
     updatedAt: d.timestamp({ withTimezone: true }).$onUpdate(() => new Date()),
   }),
   (t) => [index("chat_user_idx").on(t.userId)],
+);
+
+export const chatParticipants = createTable(
+  "chat_participant",
+  (d) => ({
+    id: d.integer().primaryKey().generatedByDefaultAsIdentity(),
+    chatId: d
+      .integer()
+      .notNull()
+      .references(() => chats.id, { onDelete: "cascade" }),
+    userId: d.varchar({ length: 256 }).notNull(),
+    joinedAt: d
+      .timestamp({ withTimezone: true })
+      .$defaultFn(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  }),
+  (t) => [
+    index("chat_participant_chat_idx").on(t.chatId),
+    index("chat_participant_user_idx").on(t.userId),
+    index("chat_participant_pair_idx").on(t.chatId, t.userId),
+  ],
 );
 
 export const messages = createTable(
