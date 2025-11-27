@@ -5,6 +5,7 @@ import { Geist } from "next/font/google";
 import { Crimson_Pro } from "next/font/google";
 
 import { TRPCReactProvider } from "@/trpc/react";
+import { ThemeProvider } from "@/app/_components/theme-provider";
 
 export const metadata: Metadata = {
   title: "LightShadow - AI Diffusion Models for Enterprise",
@@ -27,9 +28,11 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${crimsonPro.variable} dark`}>
+    <html lang="en" className={`${geist.variable} ${crimsonPro.variable}`} suppressHydrationWarning>
       <body className="font-serif antialiased">
-        <TRPCReactProvider>{children}</TRPCReactProvider>
+        <ThemeProvider>
+          <TRPCReactProvider>{children}</TRPCReactProvider>
+        </ThemeProvider>
       </body>
     </html>
   );
