@@ -1,14 +1,24 @@
-import * as pdfjsLib from "pdfjs-dist";
+// Lazy load pdfjs-dist to avoid bundling browser APIs in server code
+// Use legacy build for Node.js/server environments (doesn't require DOMMatrix)
+let pdfjsLibPromise: Promise<typeof import("pdfjs-dist")> | null = null;
 
-// Configure PDF.js worker for server-side usage
-// In Next.js server environment, pdfjs-dist can work without a worker
-if (typeof window === "undefined") {
-  // Server-side: Set worker to null to disable worker (uses main thread)
-  // This is necessary for Node.js environments where workers may not work properly
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "";
-} else {
-  // Client-side: use the worker from CDN
-  pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjsLib.version}/pdf.worker.min.mjs`;
+async function getPdfjsLib() {
+  if (!pdfjsLibPromise) {
+    if (typeof window === "undefined") {
+      // Server-side: Use legacy build that doesn't require browser APIs like DOMMatrix
+      // The legacy build path for pdfjs-dist v5
+      pdfjsLibPromise = import("pdfjs-dist/legacy/build/pdf.mjs");
+      const lib = await pdfjsLibPromise;
+      // Disable worker in server environment
+      lib.GlobalWorkerOptions.workerSrc = "";
+    } else {
+      // Client-side: Use regular build with worker
+      pdfjsLibPromise = import("pdfjs-dist");
+      const lib = await pdfjsLibPromise;
+      lib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${lib.version}/pdf.worker.min.mjs`;
+    }
+  }
+  return pdfjsLibPromise;
 }
 
 export interface ParsedPDF {
@@ -22,6 +32,9 @@ export interface ParsedPDF {
  */
 export async function parsePDF(source: string | ArrayBuffer): Promise<ParsedPDF> {
   try {
+    // Load pdfjs library dynamically
+    const pdfjsLib = await getPdfjsLib();
+    
     // Load the PDF document
     const loadingTask = pdfjsLib.getDocument(source);
     const pdf = await loadingTask.promise;
