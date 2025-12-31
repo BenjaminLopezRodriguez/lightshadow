@@ -12,6 +12,7 @@ import { Sidebar } from "./sidebar";
 import {
   Sheet,
   SheetContent,
+  SheetTitle,
 } from "@/components/ui/sheet";
 
 export function Toolbar() {
@@ -89,6 +90,7 @@ export function Toolbar() {
           side="left"
           className="w-80 bg-background/95 backdrop-blur-xl border-border p-0"
         >
+          <SheetTitle className="sr-only">Navigation Menu</SheetTitle>
           <Sidebar className="h-full border-0" />
         </SheetContent>
       </Sheet>

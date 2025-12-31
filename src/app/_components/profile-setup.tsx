@@ -47,13 +47,18 @@ export function ProfileSetup() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-black via-indigo-950/20 to-black p-4">
+    <div className="min-h-screen flex items-center justify-center  bg-slate-800 p-4">
       <div className="w-full max-w-md">
         <div className="bg-black/40 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl p-8 space-y-6">
-          <div className="text-center space-y-2">
-            <div className="w-16 h-16 rounded-full bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center mx-auto shadow-xl shadow-indigo-500/20">
-              <User className="w-8 h-8 text-white" />
-            </div>
+          <div className="text-center space-y-2 w-full ">
+
+          <div className="w-20 h-20 mx-auto mb-10 text-center rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center overflow-hidden">
+                  {avatarUrl ? (
+                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
+                  ) : (
+                    <User className="w-10 h-10 text-white/40" />
+                  )}
+                </div>
             <h1 className="text-2xl font-serif text-white">Complete Your Profile</h1>
             <p className="text-sm text-white/60">Set up your account to get started</p>
           </div>
@@ -61,15 +66,8 @@ export function ProfileSetup() {
           <form onSubmit={handleSubmit} className="space-y-6">
             {/* Avatar Upload */}
             <div className="space-y-2">
-              <label className="text-sm font-medium text-white/80">Profile Picture</label>
               <div className="flex items-center gap-4">
-                <div className="w-20 h-20 rounded-full bg-white/10 border-2 border-white/20 flex items-center justify-center overflow-hidden">
-                  {avatarUrl ? (
-                    <img src={avatarUrl} alt="Avatar" className="w-full h-full object-cover" />
-                  ) : (
-                    <User className="w-10 h-10 text-white/40" />
-                  )}
-                </div>
+               
                 <div className="flex-1">
                   <UploadButton
                     endpoint="avatarUploader"
