@@ -482,7 +482,7 @@ export function Chat() {
               <div className="w-14 h-14 rounded-xl bg-primary flex items-center justify-center mx-auto shadow-lg">
                 <Sparkles className="w-7 h-7 text-primary-foreground" />
               </div>
-              <h2 className="text-3xl font-serif text-foreground tracking-tight">How can I help you today?</h2>
+              <h2 className="text-3xl md:text-4xl font-serif font-semibold text-foreground tracking-tight">How can I help you today?</h2>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">

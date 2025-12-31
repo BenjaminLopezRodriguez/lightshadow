@@ -26,24 +26,24 @@ export function Toolbar() {
   };
 
   return (
-    <header className="fixed top-0 left-0 right-0 z-50 border-b border-border bg-background/95 backdrop-blur-sm px-6 py-3 shadow-sm">
-      <div className="flex items-center justify-between">
+    <header className="fixed top-0 left-0 right-0 z-50 border-b border-border/50 bg-background/95 backdrop-blur-xl px-6 py-4 shadow-sm">
+      <div className="flex items-center justify-between max-w-[1920px] mx-auto">
         <div className="flex items-center gap-4">
           {/* Sidebar Toggle Button - Mobile */}
           <Button
             variant="ghost"
             size="icon"
-            className="w-9 h-9 rounded-lg border border-border bg-muted/50 hover:bg-muted lg:hidden"
+            className="w-10 h-10 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/50 lg:hidden transition-all"
             onClick={() => setSidebarOpen(true)}
             aria-label="Open sidebar"
           >
-            <Menu className="w-4 h-4 text-foreground" />
+            <Menu className="w-5 h-5 text-foreground" />
           </Button>
 
-          {/* Logo and Title with spacing */}
+          {/* Logo and Title */}
           <div className="flex items-center gap-3">
             <LottieLogo />
-            <h1 className="text-xl font-serif text-foreground tracking-tight">
+            <h1 className="text-xl font-serif font-semibold text-foreground tracking-tight">
               LightShadow
             </h1>
           </div>
@@ -55,7 +55,7 @@ export function Toolbar() {
             variant="ghost"
             size="sm"
             onClick={handleNewChat}
-            className="hidden sm:flex items-center gap-2 rounded-lg border border-border bg-muted/50 hover:bg-muted text-foreground"
+            className="hidden sm:flex items-center gap-2 rounded-xl border border-border/50 bg-muted/30 hover:bg-muted/50 text-foreground transition-all"
           >
             <Plus className="w-4 h-4" />
             <span className="text-sm font-medium">New Chat</span>
@@ -67,7 +67,7 @@ export function Toolbar() {
           {/* User Avatar */}
           {isAuthenticated && user ? (
             <div className="flex items-center gap-2">
-              <Avatar className="w-9 h-9 border border-border">
+              <Avatar className="w-10 h-10 border-2 border-border/50 shadow-sm">
                 {user.picture ? (
                   <AvatarImage src={user.picture} alt={user.given_name || "User"} />
                 ) : null}
@@ -77,7 +77,7 @@ export function Toolbar() {
               </Avatar>
             </div>
           ) : (
-            <div className="w-9 h-9 rounded-full bg-muted border border-border flex items-center justify-center">
+            <div className="w-10 h-10 rounded-full bg-muted/50 border-2 border-border/50 flex items-center justify-center">
               <User className="w-4 h-4 text-muted-foreground" />
             </div>
           )}

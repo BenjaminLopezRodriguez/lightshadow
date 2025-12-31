@@ -2,8 +2,8 @@ import "@/styles/globals.css";
 import "highlight.js/styles/github-dark.css";
 
 import { type Metadata } from "next";
-import { Geist } from "next/font/google";
-import { Crimson_Pro } from "next/font/google";
+import { Inter } from "next/font/google";
+import { Playfair_Display } from "next/font/google";
 
 import { TRPCReactProvider } from "@/trpc/react";
 import { ThemeProvider } from "@/app/_components/theme-provider";
@@ -14,14 +14,15 @@ export const metadata: Metadata = {
   icons: [{ rel: "icon", url: "/favicon.ico" }],
 };
 
-const geist = Geist({
+const inter = Inter({
   subsets: ["latin"],
-  variable: "--font-geist-sans",
+  variable: "--font-inter",
+  weight: ["400", "500", "600", "700"],
 });
 
-const crimsonPro = Crimson_Pro({
+const playfairDisplay = Playfair_Display({
   subsets: ["latin"],
-  variable: "--font-crimson-pro",
+  variable: "--font-playfair",
   weight: ["400", "500", "600", "700"],
 });
 
@@ -29,8 +30,8 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className={`${geist.variable} ${crimsonPro.variable}`} suppressHydrationWarning>
-      <body className="font-serif antialiased">
+    <html lang="en" className={`${inter.variable} ${playfairDisplay.variable}`} suppressHydrationWarning>
+      <body className="font-sans antialiased">
         <ThemeProvider>
           <TRPCReactProvider>{children}</TRPCReactProvider>
         </ThemeProvider>

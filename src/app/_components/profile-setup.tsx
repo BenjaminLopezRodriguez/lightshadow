@@ -59,7 +59,7 @@ export function ProfileSetup() {
                     <User className="w-10 h-10 text-white/40" />
                   )}
                 </div>
-            <h1 className="text-2xl font-serif text-white">Complete Your Profile</h1>
+            <h1 className="text-2xl md:text-3xl font-serif font-semibold text-white">Complete Your Profile</h1>
             <p className="text-sm text-white/60">Set up your account to get started</p>
           </div>
 

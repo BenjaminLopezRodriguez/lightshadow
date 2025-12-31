@@ -49,7 +49,7 @@ export function AddContact() {
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-black/90 border border-white/10 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-xl font-serif text-white">Add Contact</h2>
+              <h2 className="text-xl md:text-2xl font-serif font-semibold text-white">Add Contact</h2>
               <button
                 onClick={() => {
                   setIsOpen(false);
