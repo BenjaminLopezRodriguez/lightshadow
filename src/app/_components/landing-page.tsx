@@ -7,6 +7,7 @@ import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
 import { useRouter } from "next/navigation";
 import { LottieLogo } from "./lottie-logo";
 import { cn } from "@/lib/utils";
+import { LightTerminalApp } from "../m/lighterminal/_components/app";
 
 export function LandingPage() {
   const { isAuthenticated } = useKindeBrowserClient();
@@ -145,6 +146,31 @@ export function LandingPage() {
               )}
             </div>
           </div>
+
+          {/* LightTerminal Demo Section */}
+          <section className="mt-32 mb-24">
+            <div className="max-w-6xl mx-auto px-4 md:px-8">
+              <div className="text-center mb-12 space-y-4 animate-fade-in animation-delay-400">
+                <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-primary/10 border border-primary/20 text-sm font-medium text-primary">
+                  <Zap className="w-4 h-4" />
+                  Interactive Demo
+                </div>
+                <h2 className="text-3xl md:text-4xl font-serif font-semibold text-foreground">
+                  Try LightTerminal
+                </h2>
+                <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+                  Experience our AI-powered troubleshooting platform in action
+                </p>
+              </div>
+              
+              <div className="relative rounded-2xl border border-border/50 bg-card/80 backdrop-blur-sm shadow-2xl overflow-hidden animate-fade-in animation-delay-600">
+                <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-transparent to-primary/5" />
+                <div className="relative p-6 md:p-8">
+                  <LightTerminalApp />
+                </div>
+              </div>
+            </div>
+          </section>
 
           {/* Features Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8 max-w-6xl mx-auto">
